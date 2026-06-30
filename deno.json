@@ -1,0 +1,17 @@
+{
+  "name": "@publicdomainrelay/macos-app-attest",
+  "version": "0.1.0",
+  "desktop": {
+    "app": {
+      "name": "macOS App Attest",
+      "identifier": "com.publicdomainrelay.macos-app-attest2"
+    },
+    "backend": "webview",
+    "output": {
+      "macos": "./dist/macOS-App-Attest.app"
+    },
+    "macos": {
+      "codesignIdentity": "Apple Development: John Andersen (C46CT949V3)"
+    },
+  }
+}
