@@ -1,0 +1,84 @@
+# SSH config snippet for FedProxy persistent tunnels
+#
+# Add this to ~/.ssh/config (create the file if it doesn't exist).
+# Then connect with: ssh fedproxy-myapp
+#
+# For multiple services, duplicate the Host block with different names
+# and -R arguments.
+
+Host fedproxy-myapp
+    HostName fedproxy.com
+    Port 2222
+    User your-handle
+    IdentityFile ~/.ssh/fedproxy
+    UserKnownHostsFile /dev/null
+    StrictHostKeyChecking no
+    PasswordAuthentication no
+    ServerAliveInterval 60
+    ExitOnForwardFailure yes
+    RemoteForward myapp:80:127.0.0.1:8080
+    SessionType none
+    RequestTTY no
+
+# Example for a second service on a different port
+# Host fedproxy-api
+#     HostName fedproxy.com
+#     Port 2222
+#     User your-handle
+#     IdentityFile ~/.ssh/fedproxy
+#     UserKnownHostsFile /dev/null
+#     StrictHostKeyChecking no
+#     PasswordAuthentication no
+#     ServerAliveInterval 60
+#     ExitOnForwardFailure yes
+#     RemoteForward api:80:127.0.0.1:3000
+#     SessionType none
+#     RequestTTY no
+
+
+# ── macOS launchd plist ──────────────────────────────────────────────
+# Save as ~/Library/LaunchAgents/com.fedproxy.myapp.plist
+# Load with: launchctl load ~/Library/LaunchAgents/com.fedproxy.myapp.plist
+# Unload with: launchctl unload ~/Library/LaunchAgents/com.fedproxy.myapp.plist
+
+<!--
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fedproxy.myapp</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh</string>
+        <string>-NnT</string>
+        <string>-p</string>
+        <string>2222</string>
+        <string>-o</string>
+        <string>UserKnownHostsFile=/dev/null</string>
+        <string>-o</string>
+        <string>StrictHostKeyChecking=no</string>
+        <string>-o</string>
+        <string>PasswordAuthentication=no</string>
+        <string>-o</string>
+        <string>ServerAliveInterval=60</string>
+        <string>-o</string>
+        <string>ExitOnForwardFailure=yes</string>
+        <string>-i</string>
+        <string>/Users/you/.ssh/fedproxy</string>
+        <string>-R</string>
+        <string>myapp:80:127.0.0.1:8080</string>
+        <string>your-handle@fedproxy.com</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/fedproxy-myapp.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/fedproxy-myapp.err</string>
+</dict>
+</plist>
+-->

@@ -367,6 +367,14 @@ static `url_pending` buffer.
 `CFBundleURLTypes` injected post-build via PlistBuddy (see `rebuild.sh`) because
 `deno desktop` has no pre-build hook for this.
 
+### Fedproxy Skill
+
+Full fedproxy documentation copied into `docs/fedproxy/`:
+- `SKILL.md` — overview, mental model, service naming, workflow
+- `references/tunnel-setup.md` — step-by-step tunnel setup
+- `references/atproto-records.md` — ssh-public-key record schema
+- `ssh-config-example` — SSH config snippet for persistent tunnels
+
 ### OAuth Client Registration — Why Fedproxy Is Required
 
 bsky.social rejects `http://localhost` client type when `redirect_uris` contains
