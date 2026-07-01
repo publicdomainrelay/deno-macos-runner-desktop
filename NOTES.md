@@ -200,6 +200,59 @@ security cms -D -i <profile> | plutil -p - | grep -A2 app-attest
 # Must show: com.apple.developer.devicecheck.app-attest-opt-in => ["CDhash"]
 ```
 
+### Troubleshooting: "no application set to open the URL" (custom scheme callback broken)
+
+Symptom: OAuth flow works up to browser redirect, then macOS shows:
+
+> There is no application set to open the URL
+> com.fedproxy.attest--johnandersen777-bsky-social:/callback?...
+
+The app launches and runs fine (bridge loads, API works), but macOS
+doesn't route the custom URL scheme to it.
+
+Root cause: `embedded.provisionprofile` is missing from the project root.
+When `deno desktop` runs, it reads the profile from
+`<cwd>/embedded.provisionprofile` (see `desktop.rs:2781-2782`). If the
+file is absent, the app compiles and signs successfully but WITHOUT the
+provisioning profile embedded in the bundle. At launch time, AMFI
+validates the restricted entitlements (App Attest) against the profile.
+No profile → AMFI rejects → app never launches → Launch Services never
+registers the URL scheme.
+
+Even though `rebuild.sh` may still launch an older (cached) instance of
+the app that has the profile, the freshly built bundle is dead. Once the
+old instance exits, no handler exists for the custom scheme.
+
+Fix:
+```sh
+# Find the profile (Apple Developer → download → appears here):
+ls ~/Library/MobileDevice/Provisioning\ Profiles/
+
+# Copy to project root:
+cp ~/Library/MobileDevice/Provisioning\ Profiles/<UUID>.mobileprovision \
+   embedded.provisionprofile
+
+# Rebuild:
+./build_bridge.sh
+./rebuild.sh
+```
+
+Verify:
+```sh
+# 1. Check Info.plist has the scheme
+/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" \
+  dist/macOS-App-Attest.app/Contents/Info.plist
+
+# 2. Check signature seals Info.plist (must NOT say "not bound")
+codesign -dvvv dist/macOS-App-Attest.app 2>&1 | grep "Info.plist"
+
+# 3. Check Launch Services registered the scheme
+lsregister -dump 2>/dev/null | grep "com.fedproxy.attest--johnandersen777-bsky-social"
+```
+
+Detected: 2026-06-30 (provisioning profile accidentally deleted during
+ABC-layering refactor cleanup of `dist/` directory).
+
 ### Step 4: Entitlements file
 
 `app.entitlements`:
