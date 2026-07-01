@@ -36,84 +36,21 @@ xwGqCAIxAOWqeFg1rj5GICZ6nF0EEmrZ3oBF0s7oThZlPk2bOAyf8W8LyKjJjPJk
 E/KDqUJ9dA==
 -----END CERTIFICATE-----`;
 
-// ===========================================================================
-// Minimal CBOR decoder (RFC 8949) — enough for App Attest attestation
-// ===========================================================================
-
-class CborDecoder {
-  private view: DataView;
-  private offset: number;
-
-  constructor(private buf: Uint8Array) {
-    this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    this.offset = 0;
-  }
-
-  decode(): unknown {
-    if (this.offset >= this.buf.length) return undefined;
-    const byte = this.buf[this.offset];
-    const major = byte >> 5;
-    const info = byte & 0x1f;
-
-    if (major === 0) return this.readUint(info); // unsigned
-    if (major === 1) return -1 - this.readUint(info); // negative
-    if (major === 2) return this.readBytes(this.readUint(info)); // byte string
-    if (major === 3) { // text string
-      const bytes = this.readBytes(this.readUint(info));
-      return new TextDecoder().decode(bytes);
-    }
-    if (major === 4) { // array
-      const len = this.readUint(info);
-      const arr: unknown[] = [];
-      for (let i = 0; i < len; i++) arr.push(this.decode());
-      return arr;
-    }
-    if (major === 5) { // map
-      const len = this.readUint(info);
-      const map = new Map<string, unknown>();
-      for (let i = 0; i < len; i++) {
-        const key = this.decode() as string;
-        map.set(key, this.decode());
-      }
-      return map;
-    }
-    if (major === 6) { this.decode(); return this.decode(); } // tag (skip)
-    if (major === 7) { // simple/float
-      if (info < 20) return info;
-      if (info === 20) return false;
-      if (info === 21) return true;
-      if (info === 22) return null;
-      if (info === 25) { const v = this.view.getFloat16(this.offset); this.offset += 2; return v; }
-      if (info === 26) { const v = this.view.getFloat32(this.offset); this.offset += 4; return v; }
-      if (info === 27) { const v = this.view.getFloat64(this.offset); this.offset += 8; return v; }
-    }
-    throw new Error(`Unsupported CBOR: major=${major} info=${info} at ${this.offset}`);
-  }
-
-  private readUint(info: number): number {
-    this.offset++;
-    if (info < 24) return info;
-    if (info === 24) return this.buf[this.offset++];
-    if (info === 25) { const v = this.view.getUint16(this.offset); this.offset += 2; return v; }
-    if (info === 26) { const v = this.view.getUint32(this.offset); this.offset += 4; return v; }
-    if (info === 27) { const v = Number(this.view.getBigUint64(this.offset)); this.offset += 8; return v; }
-    throw new Error(`Unsupported uint info: ${info}`);
-  }
-
-  private readBytes(len: number): Uint8Array {
-    const bytes = this.buf.slice(this.offset, this.offset + len);
-    this.offset += len;
-    return bytes;
-  }
-}
+import { CborDecoder } from "@publicdomainrelay/badge-blue-keys-common";
 
 function cborDecode(buf: Uint8Array): unknown {
   return new CborDecoder(buf).decode();
 }
 
 // ===========================================================================
-// X.509 certificate helpers (minimal — enough for App Attest verification)
+// X.509 certificate helpers — real chain/signature verification via
+// @peculiar/x509 (replaces the old hand-rolled DER walker, which never
+// checked signatures and made verifyAppAttestChain a no-op stub).
 // ===========================================================================
+
+import { cryptoProvider, X509Certificate } from "@peculiar/x509";
+
+cryptoProvider.set(crypto);
 
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
@@ -131,167 +68,31 @@ function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-function detectCurveFromSpki(spki: Uint8Array): string {
-  // Look for named curve OID bytes in the AlgorithmIdentifier
-  const p256 = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]; // 1.2.840.10045.3.1.7
-  const p384 = [0x2b, 0x81, 0x04, 0x00, 0x22]; // 1.3.132.0.34
-  const p521 = [0x2b, 0x81, 0x04, 0x00, 0x23]; // 1.3.132.0.35
-  function has(oid: number[]): boolean {
-    outer: for (let i = 0; i <= spki.length - oid.length; i++) {
-      for (let j = 0; j < oid.length; j++) if (spki[i + j] !== oid[j]) continue outer;
-      return true;
-    }
-    return false;
-  }
-  if (has(p384)) return "P-384";
-  if (has(p521)) return "P-521";
-  return "P-256";
+function pemToDer(pem: string): Uint8Array {
+  const b64 = pem
+    .replace(/-----BEGIN CERTIFICATE-----/, "")
+    .replace(/-----END CERTIFICATE-----/, "")
+    .replace(/\s+/g, "");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-// Parse DER certificate and extract public key + extensions
-async function parseCert(der: Uint8Array): Promise<{
-  publicKey: CryptoKey;
+const APPLE_ROOT_CERT = new X509Certificate(pemToDer(APPLE_APP_ATTEST_ROOT_CA));
+
+// Parse DER certificate and extract extensions (OID → raw extnValue bytes,
+// matching the previous Map<string, Uint8Array> shape callers expect).
+function parseCert(der: Uint8Array): {
+  cert: X509Certificate;
   extensions: Map<string, Uint8Array>;
-  subject: string;
-}> {
-  der = der.slice(); // ensure zero byteOffset for DER parsing
-  const spki = extractSpkiFromCert(der);
-  const namedCurve = detectCurveFromSpki(spki);
-  const cert = await crypto.subtle.importKey(
-    "spki",
-    spki,
-    { name: "ECDSA", namedCurve },
-    false,
-    ["verify"],
-  );
-
-  // Extract the credential extension (1.2.840.113635.100.8.2) from DER
-  const extensions = parseCertExtensions(der);
-
-  return { publicKey: cert, extensions, subject: "" };
-}
-
-// Minimal SPKI extraction from X.509 DER
-function extractSpkiFromCert(der: Uint8Array): Uint8Array {
-  const dv = new DataView(der.buffer, der.byteOffset, der.byteLength);
-  let off = 0;
-
-  function readLength(): number {
-    const b = der[off++];
-    if (b < 0x80) return b;
-    const n = b & 0x7f;
-    let len = 0;
-    for (let i = 0; i < n; i++) len = (len << 8) | der[off++];
-    return len;
-  }
-
-  function readTag(): number {
-    return der[off++];
-  }
-
-  function skip(n: number) { off += n; }
-
-  // Certificate ::= SEQUENCE
-  readTag(); readLength(); // outer SEQUENCE
-  // tbsCertificate ::= SEQUENCE
-  readTag(); const tbsLen = readLength(); const tbsStart = off;
-  // version [0] EXPLICIT
-  const tag = der[off];
-  if (tag === 0xa0) { readTag(); skip(readLength()); } // skip version [0] EXPLICIT
-  // serialNumber
-  readTag(); skip(readLength());
-  // signature
-  readTag(); skip(readLength());
-  // issuer
-  readTag(); skip(readLength());
-  // validity
-  readTag(); skip(readLength());
-  // subject
-  readTag(); skip(readLength());
-
-  // subjectPublicKeyInfo ::= SEQUENCE
-  // Navigate to the end of tbsCertificate to find SPKI
-  // Actually, we know the pattern: after subject comes SPKI
-  // SPKI starts with SEQUENCE tag, then the algorithm identifier, then BIT STRING with the key
-  // We search for the SPKI within the remaining tbsCertificate bytes
-  const tbsEnd = tbsStart + tbsLen;
-
-  // Find the SPKI: typically starts right after subject
-  // The SPKI is a SEQUENCE containing algorithm + BIT STRING
-  // We locate the last SEQUENCE in tbsCertificate before extensions
-  let spkiStart = off;
-  while (spkiStart < tbsEnd && der[spkiStart] !== 0x30) spkiStart++;
-  if (spkiStart >= tbsEnd) throw new Error("SPKI not found");
-
-  // The SPKI spans from spkiStart to the start of extensions (or end of tbsCertificate)
-  // We need to find the BIT STRING containing the actual key
-  off = spkiStart;
-  const spkiTagOff = off;
-  readTag(); const spkiLen = readLength();
-  const spkiEnd = off + spkiLen;
-  return der.slice(spkiTagOff, spkiEnd);
-}
-
-// Parse extensions from tbsCertificate, extracting OID → value map
-function derOid(bytes: Uint8Array): string {
-  const parts: number[] = [];
-  let val = 0;
-  for (let i = 0; i < bytes.length; i++) {
-    val = (val << 7) | (bytes[i] & 0x7f);
-    if (!(bytes[i] & 0x80)) {
-      if (parts.length === 0) { parts.push(Math.floor(val / 40)); parts.push(val % 40); }
-      else parts.push(val);
-      val = 0;
-    }
-  }
-  return parts.join(".");
-}
-
-function parseCertExtensions(der: Uint8Array): Map<string, Uint8Array> {
+} {
+  const cert = new X509Certificate(der.slice());
   const extensions = new Map<string, Uint8Array>();
-  let off = 0;
-
-  function readLen(): number {
-    const b = der[off++];
-    if (b < 0x80) return b;
-    const n = b & 0x7f; let len = 0;
-    for (let i = 0; i < n; i++) len = (len << 8) | der[off++];
-    return len;
+  for (const ext of cert.extensions) {
+    extensions.set(ext.type, new Uint8Array(ext.value));
   }
-  function skip(n: number) { off += n; }
-
-  // Enter Certificate SEQUENCE (don't skip — just consume tag+len)
-  off++; readLen();
-  // Enter tbsCertificate SEQUENCE
-  off++; const tbsLen = readLen(); const tbsEnd = off + tbsLen;
-
-  // Fast-forward to [3] EXPLICIT extensions tag (0xa3) by skipping TLVs
-  while (off < tbsEnd && der[off] !== 0xa3) { off++; skip(readLen()); }
-  if (off >= tbsEnd) return extensions;
-
-  off++; readLen(); // enter [3] EXPLICIT
-  off++; readLen(); // enter Extensions SEQUENCE OF
-
-  // Parse each Extension: SEQUENCE { OID, [critical BOOLEAN,] OCTET STRING }
-  while (off < tbsEnd && der[off] === 0x30) {
-    off++; const seqLen = readLen(); const seqEnd = off + seqLen;
-
-    off++; // OID tag 0x06
-    const oidLen = readLen();
-    const oid = derOid(der.slice(off, off + oidLen));
-    off += oidLen;
-
-    if (off < seqEnd && der[off] === 0x01) { off++; skip(readLen()); } // skip critical BOOLEAN
-
-    if (off < seqEnd && der[off] === 0x04) { // OCTET STRING
-      off++;
-      const valLen = readLen();
-      extensions.set(oid, der.slice(off, off + valLen));
-      off += valLen;
-    }
-    off = seqEnd;
-  }
-  return extensions;
+  return { cert, extensions };
 }
 
 // ===========================================================================
@@ -428,9 +229,9 @@ export async function verifyBadgeBlueKeysRecord(
   const expectedNonce = await sha256(nonceInput);
 
   // 5. Parse credential certificate — extract public key + extensions
-  let certInfo: { publicKey: CryptoKey; extensions: Map<string, Uint8Array> };
+  let certInfo: { cert: X509Certificate; extensions: Map<string, Uint8Array> };
   try {
-    certInfo = await parseCert(credentialCertDer);
+    certInfo = parseCert(credentialCertDer);
   } catch (e) {
     return { valid: false, reason: `credential cert parse failed: ${e instanceof Error ? e.message : e}` };
   }
@@ -463,12 +264,11 @@ export async function verifyBadgeBlueKeysRecord(
     }
   }
 
-  // 8. Verify certificate chain against Apple root (pinned)
-  // In production: full chain validation with Apple's App Attest root CA
-  // For now: verify chain structure (credential → intermediate → root)
-  const chainValid = await verifyAppAttestChain(x5c);
-  if (!chainValid) {
-    return { valid: false, reason: "certificate chain validation failed" };
+  // 8. Verify certificate chain against Apple root (pinned) — real
+  // signature + expiry checks, chain must terminate at APPLE_ROOT_CERT.
+  const chainResult = await verifyAppAttestChain(x5c);
+  if (!chainResult.valid) {
+    return { valid: false, reason: `certificate chain validation failed: ${chainResult.reason}` };
   }
 
   // 9. Check App ID if provided
@@ -499,20 +299,35 @@ function includesBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
   return false;
 }
 
-async function verifyAppAttestChain(x5c: Uint8Array[]): Promise<boolean> {
-  // Pin Apple's App Attest root CA
-  // Verify each cert in chain is signed by the next
-  for (let i = 0; i < x5c.length - 1; i++) {
-    const cert = await parseCert(x5c[i]);
-    const issuer = await parseCert(x5c[i + 1]);
-    // Verify cert.publicKey signed by issuer (not possible with Web Crypto alone
-    // without the full signature data — X.509 verification is complex)
-    // For production: use a proper X.509 library or the platform verifier
-    console.log(`  chain[${i}]: cert present, issuer present`);
+async function verifyAppAttestChain(
+  x5c: Uint8Array[],
+): Promise<{ valid: boolean; reason?: string }> {
+  if (x5c.length < 2) return { valid: false, reason: "chain too short (need leaf + intermediate)" };
+
+  const certs = x5c.map((der) => parseCert(der).cert);
+  const now = new Date();
+  for (const c of certs) {
+    if (now < c.notBefore || now > c.notAfter) {
+      return { valid: false, reason: `certificate expired or not yet valid (subject: ${c.subject})` };
+    }
   }
-  // Minimal check: chain structure exists
-  // TODO: full chain verification against pinned root
-  return true;
+
+  // Walk leaf -> intermediate(s), each signed by the next cert's key.
+  for (let i = 0; i < certs.length - 1; i++) {
+    const signedByNext = await certs[i].verify({ publicKey: certs[i + 1].publicKey, signatureOnly: true });
+    if (!signedByNext) {
+      return { valid: false, reason: `chain[${i}] signature not issued by chain[${i + 1}]` };
+    }
+  }
+
+  // Final intermediate must be signed by Apple's pinned App Attest root.
+  const last = certs[certs.length - 1];
+  const signedByRoot = await last.verify({ publicKey: APPLE_ROOT_CERT.publicKey, signatureOnly: true });
+  if (!signedByRoot) {
+    return { valid: false, reason: "chain does not terminate at pinned Apple App Attest root CA" };
+  }
+
+  return { valid: true };
 }
 
 // ===========================================================================

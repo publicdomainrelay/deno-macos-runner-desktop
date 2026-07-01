@@ -1,0 +1,35 @@
+{
+  "name": "macos-runner-desktop",
+  "description": "macOS compute provider desktop app with DeviceCheck attestation + ATProto OAuth",
+  "options": {
+    "service-name": {
+      "type": "string",
+      "description": "Service name for logging",
+      "env": "SERVICE_NAME",
+      "default": "macos-runner-desktop"
+    },
+    "bridge-path": {
+      "type": "string",
+      "description": "Path to devicecheck_bridge.dylib",
+      "env": "BRIDGE_PATH",
+      "default": "./devicecheck_bridge.dylib"
+    },
+    "state-path": {
+      "type": "string",
+      "description": "Path to provider state JSON",
+      "env": "STATE_PATH"
+    },
+    "oauth-client-id": {
+      "type": "string",
+      "description": "OAuth client_id URL",
+      "env": "OAUTH_CLIENT_ID",
+      "default": "https://attest--johnandersen777-bsky-social.fedproxy.com/oauth-client-metadata.json"
+    },
+    "oauth-redirect-uri": {
+      "type": "string",
+      "description": "OAuth redirect URI (custom URL scheme)",
+      "env": "OAUTH_REDIRECT_URI",
+      "default": "com.fedproxy.attest--johnandersen777-bsky-social:/callback"
+    }
+  }
+}

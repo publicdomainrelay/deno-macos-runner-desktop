@@ -1,5 +1,29 @@
+#!/usr/bin/env bash
+
 cd ~/src/publicdomainrelay/deno-macos-runner-desktop
-~/src/deno-fix/target/debug/deno desktop --allow-ffi --allow-net --allow-read --allow-env --allow-write --allow-run --no-check main.ts
+# Kill previous running instance(s) so the new build replaces it.
+# Matches both the launcher path and the laufey_webview helper. Escalate
+# SIGTERM -> SIGKILL and wait until no process remains before continuing,
+# otherwise a surviving instance leaves an extra (offscreen) tray + windows.
+kill_app() {
+  local pat="macOS-App-Attest|laufey_webview"
+  pgrep -f "$pat" >/dev/null 2>&1 || return 0
+  pkill -TERM -f "$pat" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$pat" >/dev/null 2>&1 || return 0
+    sleep 0.3
+  done
+  pkill -KILL -f "$pat" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$pat" >/dev/null 2>&1 || return 0
+    sleep 0.3
+  done
+}
+kill_app
+# Clear macOS saved window state so relaunch does not restore stray Settings
+# windows from the killed instance.
+rm -rf "$HOME/Library/Saved Application State/com.publicdomainrelay.macos-app-attest2.savedState" 2>/dev/null || true
+~/src/deno-fix/target/debug/deno desktop --allow-ffi --allow-net --allow-read --allow-env --allow-write --allow-run --no-check hono-macos-runner-desktop/mod.ts
 cp devicecheck_bridge.dylib dist/macOS-App-Attest.app/Contents/MacOS/
 
 # Inject custom URL scheme into Info.plist
@@ -48,4 +72,7 @@ ssh -NnT -p 2222 \
 sleep 2
 echo "Fedproxy tunnel status: $(cat /tmp/fedproxy-tunnel.log)"
 
-open dist/macOS-App-Attest.app
+# Insurance: ensure nothing came back to life during the build before launching.
+kill_app
+open dist/macOS-App-Attest.app --stdout /tmp/app.log --stderr /tmp/app.log
+echo "App logs: /tmp/app.log"

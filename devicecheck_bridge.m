@@ -211,6 +211,29 @@ uint8_t* keychain_load(const char* account, size_t* out_len) {
   return buf;
 }
 
+// Same as keychain_load but returns a null-terminated C string, no size_t*
+// out-param. JS side reads via readCStr → no pointer-arithmetic or buffer-
+// lifecycle issues. Caller frees with dc_free_string.
+char* keychain_load_str(const char* account) {
+  NSString* acct = [NSString stringWithUTF8String:account];
+  NSDictionary* query = @{
+    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService: KC_SERVICE,
+    (__bridge id)kSecAttrAccount: acct,
+    (__bridge id)kSecReturnData: @YES,
+    (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+  };
+  CFDataRef result = NULL;
+  OSStatus st = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef*)&result);
+  if (st != errSecSuccess || !result) return NULL;
+  NSData* data = (__bridge_transfer NSData*)result;
+  size_t len = [data length];
+  char* buf = malloc(len + 1);
+  memcpy(buf, [data bytes], len);
+  buf[len] = '\0';
+  return buf;
+}
+
 int keychain_delete(const char* account) {
   NSString* acct = [NSString stringWithUTF8String:account];
   NSDictionary* query = @{

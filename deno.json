@@ -1,6 +1,33 @@
 {
-  "name": "@publicdomainrelay/macos-app-attest",
-  "version": "0.1.0",
+  "workspace": [
+    "lib/common/app-attest",
+    "lib/common/atproto-oauth",
+    "lib/common/badge-blue-keys",
+    "lib/abc/app-attest",
+    "lib/abc/atproto-oauth",
+    "lib/abc/badge-blue-keys",
+    "lib/app-attest-darwin",
+    "lib/atproto-oauth-fetch",
+    "lib/badge-blue-keys-atproto",
+    "hono-macos-runner-desktop"
+  ],
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@peculiar/x509": "npm:@peculiar/x509@^1.12.3",
+    "@hono/hono": "jsr:@hono/hono@^4",
+    "@publicdomainrelay/logger": "../typescript-helpers/lib/logger/mod.ts",
+    "@publicdomainrelay/cli-args-env": "../typescript-helpers/lib/cli-args-env/mod.ts",
+    "@publicdomainrelay/serve": "../typescript-helpers/lib/serve/mod.ts",
+    "@publicdomainrelay/app-attest-common": "./lib/common/app-attest/mod.ts",
+    "@publicdomainrelay/atproto-oauth-common": "./lib/common/atproto-oauth/mod.ts",
+    "@publicdomainrelay/badge-blue-keys-common": "./lib/common/badge-blue-keys/mod.ts",
+    "@publicdomainrelay/app-attest-abc": "./lib/abc/app-attest/mod.ts",
+    "@publicdomainrelay/atproto-oauth-abc": "./lib/abc/atproto-oauth/mod.ts",
+    "@publicdomainrelay/badge-blue-keys-abc": "./lib/abc/badge-blue-keys/mod.ts",
+    "@publicdomainrelay/app-attest-darwin": "./lib/app-attest-darwin/mod.ts",
+    "@publicdomainrelay/atproto-oauth-fetch": "./lib/atproto-oauth-fetch/mod.ts",
+    "@publicdomainrelay/badge-blue-keys-atproto": "./lib/badge-blue-keys-atproto/mod.ts"
+  },
   "desktop": {
     "app": {
       "name": "macOS App Attest",
@@ -12,6 +39,6 @@
     },
     "macos": {
       "codesignIdentity": "Apple Development: John Andersen (C46CT949V3)"
-    },
+    }
   }
 }

@@ -1,4 +1,5 @@
 dist/
+node_modules/
 devicecheck_bridge.dylib
 *.dylib
 tray-icon.png

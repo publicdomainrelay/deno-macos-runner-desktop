@@ -425,6 +425,211 @@ On startup, `loadSession` reads from Keychain and restores the DPoP key pair via
 
 ### Key Auto-Creation
 
-On session detect (both fresh OAuth and Keychain restore), `createKey()` is
-called automatically with `service: '*'`. A `keyCreated` flag prevents duplicate
-creates in the same session. The manual "Create BadgeBlue Key" button was removed.
+On session detect (both fresh OAuth and Keychain restore), `createAssociationRecord()`
+is called automatically. The record uses a deterministic `did:key:z...` rkey
+derived from the Secure Enclave credential cert's public key (see below).
+Auto-created if `getRecord` returns 404.
+
+## FFI size_t* out-param is broken across Deno FFI
+
+Multiple attempts to pass a `size_t*` output parameter through the FFI boundary
+failed. Every approach produced garbled data on readback:
+
+| Approach | Result |
+|----------|--------|
+| inline `new Uint8Array(lenBuf.buffer)` | garbled length (GC'd before FFI write?) |
+| `allocSizeT()` + `readSizeT()` (same as attestKey) | garbled length |
+| raw `new ArrayBuffer(8)` + DataView + Uint8Array ref | garbled length |
+| embed 8-byte LE length prefix in malloc'd buffer | `ptr + 8n` BigInt arithmetic → TypeError |
+| `readCStr` from null-terminated return (`keychain_load_str`) | **WORKS** |
+
+The `size_t*` out-param works for `dc_attest_key` and `dc_generate_assertion`
+but fails for `keychain_load` — likely a Deno FFI calling-convention edge case
+on arm64 macOS. The fix: `keychain_load_str` returns `char*` null-terminated,
+JS reads with `readCStr(ptr)`, frees with `dc_free_string(ptr)`. Same proven
+pattern as `generateKey()`. **Never add new `size_t*` out-param FFI symbols.**
+
+## npm packages panic deno compile
+
+`deno desktop` (Deno 2.9.0) panics at `libs/node_resolver/analyze.rs:488` when
+compiling with npm packages that have native addons (`cbor-x`, `cbor-extract`,
+etc.) or complex module graphs. `@peculiar/x509` imported at top-level also
+triggers the panic. JSR packages are safe. **Do not add npm deps to deno.json**
+without testing `deno desktop --no-check main.ts` first.
+
+Inline replacements used:
+- **base58btc**: ~10-line encoder (not cryptography — just an encoding)
+- **CBOR attestation parser**: CborDecoder class adapted from verify-record.ts
+- **X.509 SPKI extraction**: hand-rolled ASN.1 TLV navigator → Web Crypto
+  `importKey("spki")` + `exportKey("raw")`
+
+## Association record rkey = did:key from credential cert
+
+The badgeBlueKeys record uses a deterministic rkey derived from the Secure
+Enclave credential cert's public key (not a random TID):
+
+1. `attestKey(keyId, SHA-256(did))` → CBOR attestation blob
+2. `CborDecoder` → extract `attStmt.x5c[0]` (DER-encoded credential cert)
+3. `extractSpkiDer()` — ASN.1 TLV navigation past Certificate → tbsCertificate
+   → version/serial/signature/issuer/validity/subject → SPKI SEQUENCE
+4. `crypto.subtle.importKey("spki", spkiDer, {name:"ECDSA",namedCurve:"P-256"},...)`
+5. `crypto.subtle.exportKey("raw", cryptoKey)` → 65-byte uncompressed public key
+6. Prepend P-256 multicodec varint (0x80 0x24 = 0x1200)
+7. base58btc encode → `did:key:z...` (101 chars)
+
+Same keyId always produces same rkey. Valid ATProto rkey per spec:
+allowed chars `A-Za-z0-9._-:~`, max 512 chars. Colon (from `did:key:`) is
+explicitly permitted. Auto-created on session restore if getRecord returns 404.
+
+## Loopback CSRF protection
+
+`X-App-Token` header required on all mutating POST routes. Token = `randomHex(24)`
+generated per launch, injected into both HTML templates via `__APP_TOKEN__`
+placeholder, monkey-patched into `window.fetch` by tray/settings page JS.
+Checked once at top of POST branch in handler.
+
+## Tray icon from icon.ts
+
+Import `TRAY_ICON_BASE64` from `icon.ts`, decode `atob()` → Uint8Array, pass
+to `tray.setIcon()`. Do NOT use `Deno.readFileSync("tray-icon.png")` — path
+resolution fails in compiled `.app` bundle.
+
+## Key + session persistence
+
+- Device key: `KC_DEVICE_KEY_ID = "device-key-id"` → Keychain via `keychainSave`/`keychainLoad`
+- OAuth session: `KC_SESSION_KEY = "oauth-session"` → Keychain with DPoP JWK + tokens
+- Both restored on startup. Session validated via getSession; refreshed if expired.
+- Regenerate (Settings → Danger Zone) clears both + creates new key.
+- `rebuild.sh` now `pkill -f "macOS-App-Attest"` before build to ensure clean restart.
+
+## Panel width transition — grey area fix (2026-06-30)
+
+### Problem
+
+Switching between Home (320px) and Settings/Identity (560px) panel widths showed
+a grey area at the bottom of the native window during and after the CSS width
+transition. The transition animates `.panel { width }` over 320ms via
+`cubic-bezier(.4,0,.2,1)` while the navrail simultaneously expands/collapses
+(0px ↔ 120px). The native WKWebView window height is set before the CSS
+animation starts, but the content height changes mid-transition as text reflows
+at intermediate widths, creating a mismatch.
+
+### Root cause (2 bugs)
+
+1. **Navrail transition not disabled during pre-measurement** — `showView()` in
+   `tray-ui.ts` disabled `.panel`'s CSS transition to snap-measure-snap, but
+   `.navrail` has its own `transition: width .32s ...` and was NOT disabled.
+   `void panelEl.offsetHeight` forced reflow while navrail's computed width was
+   still 0px (start of its own animation), so `document.body.scrollHeight`
+   reflected the content area at full 560px. But after the navrail animation
+   completes, the navrail takes 120px, leaving only 440px for the content area
+   → text wraps more → actual height is taller than measured → grey area.
+
+2. **`reportHeight()` fired during active CSS transition** — `render()` calls
+   `reportHeight()` at the end of every render cycle, which schedules a
+   `requestAnimationFrame` callback. During the 320ms width animation, each
+   rAF (~16ms) reads `document.body.scrollHeight` at the intermediate animated
+   width and sends another `POST /api/tray-resize` with a wrong intermediate
+   height, overwriting the correct pre-measured value.
+
+### Fix (commit e49177e)
+
+Three-part fix in `hono-macos-runner-desktop/tray-ui.ts`:
+
+1. **Disable navrail transition during pre-measurement** — set both
+   `navrailEl.style.transition = 'none'` and `panelEl.style.transition = 'none'`
+   before snapping to target width + measuring `scrollHeight`. This ensures the
+   measurement reflects the final layout state (navrail at 120px, content area
+   at 440px).
+
+2. **Height lock during CSS animation** — after `sendResize(targetWidth, h)`,
+   set `panelEl.style.height = h + 'px'` to lock the panel height to the
+   pre-measured value. This prevents the CSS width animation from changing
+   `document.body.scrollHeight`, so `reportHeight()` mid-transition sees the
+   same height → dedup check prevents spurious resizes.
+
+3. **`transitionend` cleanup** — add a `transitionend` listener on `panelEl`
+   (filtered to `propertyName === 'width'`) that clears the height lock and
+   calls `reportHeight()` for the exact final height. This corrects any
+   sub-pixel rounding differences between the pre-measured and actual
+   post-animation heights.
+
+### Key learnings
+
+- `element.addEventListener('transitionend', ...)` fires on every completed CSS
+  transition on that element AND its descendants (events bubble). Filter on
+  `ev.propertyName` to only respond to the specific property (e.g. `width`).
+- `panelEl.offsetHeight` forces a synchronous reflow that includes the current
+  computed state of ALL transitioning elements — if any descendant has an active
+  CSS transition, its width reflects the *start* of its animation, not the final
+  value. Must disable ALL transitioning elements' transitions during snap-measure.
+- `panelEl.style.height = h + 'px'` + `transitionend` → clear height + `reportHeight()`
+  is a clean pattern: the native window is set to the correct size before the
+  animation, the height lock prevents intermediate states from triggering
+  spurious resizes, and the final cleanup handles rounding.
+
+### 5-agent fan-out investigation pattern
+
+This fix was developed by launching 5 parallel subagents, each researching a
+different angle of the problem:
+
+| Agent | Research direction | Key finding |
+|-------|-------------------|-------------|
+| 1 | WKWebView viewport resize behavior | Known macOS bug: `scrollHeight` can return viewport size, not content size |
+| 2 | CSS transition layout reflow timing | Navrail transition not disabled — measured at wrong content area width |
+| 3 | Native WKWebView resize mechanics | `#[fast]` op → synchronous `setFrame:` — no Rust-side async delay |
+| 4 | Deno desktop runtime source | Full call chain: JS fetch → V8 op → laufey C ABI → NSWindow setFrame |
+| 5 | JS-driven resize alternatives | rAF stepping, ResizeObserver, Web Animations API trade-offs |
+
+Agents 2 and 4 independently identified the navrail transition as the root
+cause. All 5 agents converged on the same fix strategy (pre-measure at final
+state + lock height + transitionend cleanup). The fan-out pattern works because
+each agent explores a different subsystem (WebKit internals, CSS spec, Deno
+runtime, native macOS APIs) — findings that would take 10+ sequential tool calls
+to discover individually are surfaced in parallel.
+
+## Rebuild stdout/stderr capture (2026-06-30)
+
+`rebuild.sh` `open` command now captures app stdout/stderr to `/tmp/app.log`:
+
+```sh
+open dist/macOS-App-Attest.app --stdout /tmp/app.log --stderr /tmp/app.log
+echo "App logs: /tmp/app.log"
+```
+
+This makes structured JSON logs (from `createLogger`) available for debugging
+without needing to re-launch the app manually with stdout capture.
+
+### DPoP nonce retry on PDS resource calls (2026-06-30, commit fecfda9)
+
+`lib/badge-blue-keys-atproto/mod.ts` `createRecord()` and the `getRecord` call
+inside `findOrCreateRecord()` now retry once with the server-supplied
+`DPoP-Nonce` header on `use_dpop_nonce` errors. Previously these PDS resource
+calls sent DPoP proofs with no nonce and never retried, causing every first
+attempt to fail silently → `associationRecordUri` stayed `null` forever.
+Pattern matches `lib/atproto-oauth-fetch/mod.ts` which already handled this
+correctly for PAR/token/getSession/refresh.
+
+Also: `findOrCreateRecord` now treats `400 { error: "RecordNotFound" }` the
+same as HTTP 404 (PDS returns 400, not 404, when a record doesn't exist).
+
+### OAuth error banner shows real error (2026-06-30, commit fecfda9)
+
+`tray-ui.ts` banner was hardcoded to `"Couldn't connect identity — request
+expired"` regardless of what actually failed. Now renders `"Couldn't connect
+identity: " + d.oauthError` so the real failure reason is visible.
+
+### Session restore logging (2026-06-30, commit fecfda9)
+
+Added structured log entries for every branch in the session-restore path
+(`hono-macos-runner-desktop/mod.ts`):
+- `"no saved session found in keychain, skipping restore"` when keychain returns null
+- `"saved session loaded from keychain, validating"` when found
+- `"findOrCreateRecord after restore"` / `"findOrCreateRecord after refresh"` with result
+
+And in `lib/app-attest-darwin/mod.ts`:
+- `"keychain load returned no item"` when `keychain_load_str` returns null
+- `"keychain load skipped, bridge not loaded"` when bridge not initialized
+
+Previously: `if (!saved) return;` with no log → impossible to distinguish
+"keychain empty" from "keychain read failed" from "session parse error".
