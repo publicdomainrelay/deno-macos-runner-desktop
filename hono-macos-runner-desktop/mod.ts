@@ -35,6 +35,9 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
 import { createDpopProof } from "@publicdomainrelay/atproto-oauth-fetch";
 import type { RelayRef } from "@publicdomainrelay/serve";
+// Static import ensures deno compile bundles this file. Content extracted
+// at runtime to cache dir so copySystemctlShim finds it without fetch().
+import systemctlShimSource from "../../hono-compute-provider/lib/compute-provider-local/systemctl-shim.ts" with { type: "text" };
 
 // ===========================================================================
 // Config resolution
@@ -67,10 +70,13 @@ const BIDDER_SCOPE_COLLECTIONS = [
   "com.publicdomainrelay.temp.market.receipts.x402",
   "com.publicdomainrelay.temp.market.event",
   "com.publicdomainrelay.temp.compute.config.wif.simple",
+  "com.fedproxy.rbac",
 ];
-const OAUTH_SCOPE = `atproto repo:${BADGE_BLUE_KEYS_NSID}?action=create ${
+const OAUTH_SCOPE = `atproto ${
   BIDDER_SCOPE_COLLECTIONS.map((c) => `repo:${c}?action=create repo:${c}?action=update`).join(" ")
-}`;
+} repo:${BADGE_BLUE_KEYS_NSID}?action=create`
+  + " rpc:com.publicdomainrelay.temp.market.submitBid?aud=*"
+  + " rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*";
 
 const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
@@ -133,6 +139,7 @@ let marketBidder: { beginServe(): Promise<void>; shutdown(): void } | null = nul
 let marketKeypair: MarketKeypair | null = null;
 let marketSignerHex: string | null = null;
 let bidderRelay: RelayRef | null = null;
+let bidderServe: ServeHandle | null = null;
 let bidderStarted = false;
 
 // ===========================================================================
@@ -148,7 +155,7 @@ interface ProviderState {
 }
 
 const DEFAULT_PROVIDER_STATE: ProviderState = {
-  dispatchingEnabled: true, workersEnabled: true, containersEnabled: false,
+  dispatchingEnabled: true, workersEnabled: true, containersEnabled: true,
   acceptScope: null, linkedAt: null,
 };
 
@@ -186,6 +193,9 @@ async function startBidder(): Promise<void> {
       { createOAuthAgent, createDesktopATProto },
       { loadOrGenerateKeypair },
       { createPlcDirectoryClient },
+      { createLocalComputeProvider },
+      { createOidcProvisioningEnricher },
+      { createRbacProvisioner },
     ] = await Promise.all([
       import("../../atproto-market/lib/xrpc-relay/mod.ts"),
       import("../../atproto-market/lib/market-bidder/mod.ts"),
@@ -193,6 +203,9 @@ async function startBidder(): Promise<void> {
       import("../../atproto-market/lib/market-bidder-agent/mod.ts"),
       import("../../atproto-market/lib/market-atproto/mod.ts"),
       import("../../atproto-market/lib/did-plc/mod.ts"),
+      import("../../hono-compute-provider/lib/compute-provider-local/mod.ts"),
+      import("../../hono-compute-provider/lib/oidc-issuer-hono/mod.ts"),
+      import("../../hono-compute-provider/lib/rbac-atproto/mod.ts"),
     ]);
 
     const { keypair, hex } = await loadOrCreateMarketKeypair(keychain);
@@ -215,7 +228,7 @@ async function startBidder(): Promise<void> {
       },
     );
 
-    const badgeBlueSigner = loadOrGenerateKeypair(hex) as never;
+    const badgeBlueSigner = await loadOrGenerateKeypair(hex) as never;
     const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: PLC_DIRECTORY_URL });
     const idResolver = {
       did: { async resolve(did: string) { try {
@@ -233,34 +246,109 @@ async function startBidder(): Promise<void> {
       signer: atproto.signer,
       keypair: { did: keypair.did.bind(keypair), sign: keypair.sign.bind(keypair) },
     });
-    serve.addRelay(bidderRelay);
+
+    // Bidder gets its own serve (separate from main desktop serve) so market
+    // routes + OIDC issuer mount before any request builds the Hono matcher.
+    // Matches hono-bidder pattern: one serve per relay, routes mounted first.
+    bidderServe = createServe({
+      logger,
+      tcp: { addr: "127.0.0.1", port: 0 },
+      relays: [bidderRelay],
+    });
+
+    // Ensure container runtime is ready on macOS before provisioning.
+    if (Deno.build.os === "darwin" && providerState.containersEnabled) {
+      try {
+        const p = new Deno.Command("container", { args: ["system", "start"] }).spawn();
+        await p.status;
+        log.info("bidder: container system start ok");
+        // Write bundled shim to cache so copySystemctlShim finds it.
+        const home = Deno.env.get("HOME") ?? Deno.cwd();
+        const cacheDir = `${home}/.cache/pdr-compute`;
+        await Deno.mkdir(cacheDir, { recursive: true });
+        await Deno.writeTextFile(`${cacheDir}/systemctl-shim-ubuntu.ts`, systemctlShimSource);
+        const { createContainerBackend } = await import("../../hono-compute-provider/lib/container-backend-container/mod.ts");
+        const backend = createContainerBackend();
+        const imgTag = "container-runner-ubuntu:latest";
+        if (!(await backend.imageExists(imgTag))) {
+          const { buildContainerImage } = await import("../../hono-compute-provider/lib/compute-provider-local/mod.ts");
+          await buildContainerImage(backend, "ubuntu");
+        }
+        log.info("bidder: container image ready");
+      } catch (e) {
+        log.warn("bidder: container init failed", { error: String(e) });
+      }
+    }
+
+    const localComputeProvider = createLocalComputeProvider({
+      logger,
+      atproto: atproto as never,
+      serve: bidderServe,
+      getIssuerUrl: () => {
+        const ref = bidderRelay?.proxyRef ?? "";
+        return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
+      },
+      containerMode: "container",
+      oidcProvisioner: createOidcProvisioningEnricher(() => {
+        const ref = bidderRelay?.proxyRef ?? "";
+        return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
+      }),
+      rbacProvisioner: createRbacProvisioner(),
+    });
 
     const providers: Array<{
       serviceId: string; appliesTo: string[];
       setup?(): Promise<void>; teardown?(): Promise<void>;
       buildCallbacks(d: Record<string, unknown>): Record<string, unknown>;
-    }> = [];
+    }> = [createComputeProviderHooks({ provider: localComputeProvider }) as never];
 
     marketBidder = await createMarketBidder({
-      logger, serve, atproto, relay: bidderRelay, providers,
+      logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
     });
+    // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
+    // isn't built yet (no requests have arrived on this serve).
     await marketBidder.beginServe();
+    // Now start the serve — connects relay, fires onConnected (mounts OIDC).
+    await bidderServe.beginServe();
+
+    // Create offering with correct appliesTo + relay endpoint URL now that
+    // the relay has connected and proxyRef is set. Old offerings from before
+    // providers existed have empty appliesTo — requester skips them.
+    try {
+      const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
+      const proxyRef = bidderRelay?.proxyRef ?? "";
+      const endpointUrl = proxyRef.startsWith("did:web:")
+        ? "https://" + proxyRef.slice("did:web:".length)
+        : `${atproto.did}#pdr_temp_market`;
+      await atproto.createRecord(OFFERING_NSID, {
+        $type: OFFERING_NSID,
+        endpointUrl,
+        appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
+        createdAt: new Date().toISOString(),
+        refreshedAt: new Date().toISOString(),
+      });
+      log.info("bidder: created offering with appliesTo", { endpointUrl });
+    } catch (e) {
+      log.warn("bidder: offering create failed", { error: String(e) });
+    }
+
     bidderStarted = true;
     log.info("bidder: started", { did: atproto.did, proxyRef: bidderRelay?.proxyRef });
   } catch (e) {
     log.error("bidder: start failed", { error: String(e) });
     try { bidderRelay?.close(); } catch { /* ignore */ }
-    bidderRelay = null; marketBidder = null;
+    try { bidderServe?.shutdown(); } catch { /* ignore */ }
+    bidderRelay = null; bidderServe = null; marketBidder = null;
     marketKeypair = null; marketSignerHex = null;
   }
 }
 
 function stopBidder(): void {
   if (!bidderStarted) return;
-  try { marketBidder?.shutdown(); bidderRelay?.close(); } catch (e) { log.warn("bidder: stop error", { error: String(e) }); }
-  marketBidder = null; bidderRelay = null; bidderStarted = false;
+  try { marketBidder?.shutdown(); bidderRelay?.close(); bidderServe?.shutdown(); } catch (e) { log.warn("bidder: stop error", { error: String(e) }); }
+  marketBidder = null; bidderRelay = null; bidderServe = null; bidderStarted = false;
   log.info("bidder: stopped");
 }
 
@@ -310,6 +398,32 @@ urlScheme.register();
     }
   }
   // Autostart bidder after session restore (if dispatching enabled)
+  // Check if session has rpc: scopes needed for getServiceAuth. If not,
+  // clear session to force re-auth with updated scopes.
+  if (oauthSession && OAUTH_SCOPE.includes("rpc:")) {
+    try {
+      const { createOAuthAgent } = await import("../../atproto-market/lib/market-bidder-agent/mod.ts");
+      const { keypair } = await loadOrCreateMarketKeypair(keychain);
+      const agent = createOAuthAgent(
+        { did: oauthSession.did, pds: oauthSession.pds, accessJwt: oauthSession.accessJwt,
+          dpopKeyPair: oauthSession.dpopKeyPair, dpopPublicJwk: oauthSession.dpopPublicJwk },
+        keypair,
+        { createDpopProof, serverNonce: oauthServerNonce, refreshSession: async () => oauthSession! },
+      );
+      const saAgent = agent as { getServiceAuth?: (aud: string, lxm?: string) => Promise<string> };
+      if (saAgent.getServiceAuth) {
+        await saAgent.getServiceAuth("did:web:scope-check.localhost", "com.publicdomainrelay.temp.market.submitBid");
+        log.info("oauth session has rpc scopes");
+      }
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("ScopeMissing") || msg.includes("scope")) {
+        log.warn("oauth session missing rpc scopes, clearing for re-auth", { error: msg });
+        oauthSession = null;
+        keychain.delete("oauth-session");
+      }
+    }
+  }
   if (oauthSession && providerState.dispatchingEnabled && !SKIP_MARKET) {
     startBidder().catch((e) => log.error("bidder: restore auto-start failed", { error: String(e) }));
   }
@@ -408,10 +522,14 @@ app.get("/", async (c) => {
     providerState.linkedAt = new Date().toISOString();
     saveProviderState();
     keychain.saveSession(oauthSession).catch(() => {});
-    associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!);
+    // Start bidder immediately — don't block on association record.
     if (providerState.dispatchingEnabled && !bidderStarted) {
       startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
     }
+    assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!).then((uri) => {
+      associationRecordUri = uri;
+      log.info("findOrCreateRecord after login", { associationRecordUri });
+    }).catch((e) => log.warn("findOrCreateRecord after login failed", { error: String(e) }));
     return new Response(
       `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
