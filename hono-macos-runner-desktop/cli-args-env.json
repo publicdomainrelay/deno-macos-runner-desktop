@@ -1,6 +1,6 @@
 {
   "name": "macos-runner-desktop",
-  "description": "macOS compute provider desktop app with DeviceCheck attestation + ATProto OAuth",
+  "description": "macOS compute provider desktop app with DeviceCheck attestation + ATProto OAuth + market bidder",
   "options": {
     "service-name": {
       "type": "string",
@@ -30,6 +30,34 @@
       "description": "OAuth redirect URI (custom URL scheme)",
       "env": "OAUTH_REDIRECT_URI",
       "default": "com.fedproxy.attest--johnandersen777-bsky-social:/callback"
+    },
+    "dispatcher-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host for market bidder",
+      "env": "RELAY_DISPATCHER_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory URL for DID resolution",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "firehose-url": {
+      "type": "string",
+      "description": "Firehose WebSocket URL for RFP discovery (jetstream or subscribeRepos)",
+      "env": "FIREHOSE_URL"
+    },
+    "offering-refresh-sec": {
+      "type": "number",
+      "description": "Seconds between offering record re-commits (0 to disable)",
+      "env": "OFFERING_REFRESH_SEC",
+      "default": 300
+    },
+    "skip-market": {
+      "type": "boolean",
+      "description": "Skip market bidder initialization (escape hatch for npm dep issues)",
+      "env": "SKIP_MARKET"
     }
   }
 }

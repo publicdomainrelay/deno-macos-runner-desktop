@@ -23,7 +23,7 @@ kill_app
 # Clear macOS saved window state so relaunch does not restore stray Settings
 # windows from the killed instance.
 rm -rf "$HOME/Library/Saved Application State/com.publicdomainrelay.macos-app-attest2.savedState" 2>/dev/null || true
-~/src/deno-fix/target/debug/deno desktop --allow-ffi --allow-net --allow-read --allow-env --allow-write --allow-run --no-check hono-macos-runner-desktop/mod.ts
+~/src/deno-fix/target/release/deno desktop --allow-ffi --allow-net --allow-read --allow-env --allow-write --allow-run --allow-sys --no-check hono-macos-runner-desktop/mod.ts
 cp devicecheck_bridge.dylib dist/macOS-App-Attest.app/Contents/MacOS/
 
 # Inject custom URL scheme into Info.plist

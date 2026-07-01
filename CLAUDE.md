@@ -4,9 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Custom Deno binary — required
 
-Stock `deno` does **not** work. Use the patched build:
+Stock `deno` does **not** work. Use the patched build.
+
+**When npm dependencies are imported** (any `@noble/*`, `@atproto/*`, etc.), the **release** build is required — the debug build panics at `libs/node_resolver/analyze.rs:488` with `debug_assert!(false)` on CJS-like npm packages. Without npm deps, the debug build is fine.
 
 ```sh
+# With npm deps (market bidder enabled):
+~/src/deno-fix/target/release/deno
+
+# Without npm deps (clean):
 ~/src/deno-fix/target/debug/deno
 ```
 
@@ -29,7 +35,11 @@ cargo build -p deno
 
 To rebuild after making changes to the patch:
 ```sh
+# Debug (fast compile, no npm deps support):
 cd ~/src/deno-fix && source ~/.cargo/env && cargo build -p deno
+
+# Release (needed for npm deps like @noble/curves):
+cd ~/src/deno-fix && source ~/.cargo/env && cargo build -p deno --release
 ```
 
 ## Build & run

@@ -109,6 +109,13 @@ html,body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sa
 .scope-lock{font-size:13px}
 .scope-pill{font-size:9px;border:1px solid var(--scope-radio);border-radius:3px;padding:1px 5px;color:var(--sub)}
 .scope-caption{font-size:10.5px;color:var(--sub);opacity:.85;line-height:1.4;padding:2px 2px 12px}
+.bidder-card{margin:0 0 14px;padding:10px 13px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;font-size:11px}
+.bidder-status{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.bidder-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.bidder-dot.on{background:var(--green)}.bidder-dot.off{background:#8e8e93}
+.bidder-label{font-weight:600;color:var(--text)}
+.bidder-detail{font-size:10px;color:var(--sub);font-family:ui-monospace,'SF Mono',monospace;word-break:break-all}
+.bidder-sub{font-size:10px;color:var(--sub)}
 .footer{padding:12px 16px}
 .footer-link{font-size:11.5px;color:var(--accent);font-weight:600;margin-bottom:3px;cursor:pointer}
 .footer-sub{font-size:10.5px;color:var(--sub);line-height:1.4}
@@ -171,7 +178,7 @@ const TRAY_HTML = `<!DOCTYPE html>
     <div class="divider" id="avatarDivider" style="display:none"></div>
 
     <div class="row">
-      <div><div class="row-label">Dispatching</div><div class="row-sub">Accepting jobs from authorized sources</div></div>
+      <div><div class="row-label">Dispatching</div><div class="row-sub">Run code from authorized ATProto users on this machine</div></div>
       <div class="toggle" id="toggleDispatch"><div class="knob"></div></div>
     </div>
     <div class="divider"></div>
@@ -185,6 +192,11 @@ const TRAY_HTML = `<!DOCTYPE html>
       <div class="toggle" id="toggleContainers"><div class="knob"></div></div>
     </div>
     <div class="divider"></div>
+    <div class="bidder-card" id="bidderCard">
+      <div class="bidder-status"><div class="bidder-dot off" id="bidderDot"></div><div class="bidder-label" id="bidderLabel">Market bidder offline</div></div>
+      <div class="bidder-sub" id="bidderSub"></div>
+      <div class="bidder-detail" id="bidderDetail" style="display:none"></div>
+    </div>
     <div class="section-header">Accept Jobs From</div>
     <div class="scope-list">
       <div class="scope-row" id="scopeOnlyMe" data-scope="only_me">
@@ -259,6 +271,18 @@ const TRAY_HTML = `<!DOCTYPE html>
       </div>
     </div>
   </div>
+
+  <div class="modal-backdrop" id="dispatchModal">
+    <div class="modal">
+      <div class="modal-icon"><div class="modal-icon-inner">!</div></div>
+      <div class="modal-title">Enable compute provider?</div>
+      <div class="modal-body">This allows authorized ATProto users to run code on your machine. Only enable if you understand the security implications.</div>
+      <div class="modal-actions">
+        <div class="btn" id="dispatchCancel">Cancel</div>
+        <div class="btn btn-danger" id="dispatchConfirm">Enable</div>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 (function(){
@@ -322,7 +346,10 @@ Object.keys(navItems).forEach(function(k){navItems[k].addEventListener('click',f
 function setToggle(el,on){el.className='toggle'+(on?' on':'');}
 
 function patchState(patch){
-  fetch('/api/state',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)}).then(render);
+  fetch('/api/state',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)}).then(function(r){
+    if(!r.ok){r.json().then(function(d){alert(d.error||'Request failed');});render();return;}
+    render();
+  });
 }
 
 function render(){
@@ -397,6 +424,15 @@ function render(){
       $('regenBody').textContent="This creates a new key and invalidates your ATProto association. You'll need to sign in again to re-link @"+d.session.handle+".";
     }
 
+    // Bidder status card
+    var bd=d.bidder||{};
+    var running=bd.running;
+    $('bidderDot').className='bidder-dot'+(running?' on':' off');
+    $('bidderLabel').textContent=running?'Market bidder active':'Market bidder offline';
+    $('bidderSub').textContent=running?('Connected as '+((bd.signerDid||'').slice(0,24)+'…')):'Toggle Dispatching to start';
+    if(running&&bd.proxyRef){
+      $('bidderDetail').style.display='';$('bidderDetail').textContent='Relay: '+bd.proxyRef;
+    }else{$('bidderDetail').style.display='none';}
     if(d.requestedView&&views[d.requestedView])showView(d.requestedView);
     lastMainHeight=$('mainView').scrollHeight;
     reportHeight();
@@ -429,7 +465,19 @@ $('regenConfirm').addEventListener('click',function(){
     render();
   });
 });
-$('toggleDispatch').addEventListener('click',function(){patchState({dispatchingEnabled:!(state&&state.dispatchingEnabled)});});
+$('toggleDispatch').addEventListener('click',function(){
+  var enabling=!(state&&state.dispatchingEnabled);
+  if(enabling&&!localStorage.getItem('dispatchConfirmed')){
+    $('dispatchModal').className='modal-backdrop show';return;
+  }
+  patchState({dispatchingEnabled:enabling});
+});
+$('dispatchCancel').addEventListener('click',function(){$('dispatchModal').className='modal-backdrop';});
+$('dispatchConfirm').addEventListener('click',function(){
+  localStorage.setItem('dispatchConfirmed','1');
+  $('dispatchModal').className='modal-backdrop';
+  patchState({dispatchingEnabled:true});
+});
 $('toggleWorkers').addEventListener('click',function(){patchState({workersEnabled:!(state&&state.workersEnabled)});});
 $('toggleContainers').addEventListener('click',function(){patchState({containersEnabled:!(state&&state.containersEnabled)});});
 $('scopeOnlyMe').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'only_me'});});

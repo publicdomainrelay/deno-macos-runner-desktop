@@ -30,6 +30,12 @@ import {
 
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
+// Market bidder — dynamic imports in startBidder() avoid deno desktop
+// module graph analyzer walking @atproto/* npm deps.
+import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
+import { createDpopProof } from "@publicdomainrelay/atproto-oauth-fetch";
+import type { RelayRef } from "@publicdomainrelay/serve";
+
 // ===========================================================================
 // Config resolution
 // ===========================================================================
@@ -51,6 +57,12 @@ const logger = createStructuredLogger(serviceName);
 const OAUTH_CLIENT_ID = (options.oauthClientId as string) || OAUTH_CLIENT_ID_DEFAULT;
 const OAUTH_REDIRECT_URI = (options.oauthRedirectUri as string) || OAUTH_REDIRECT_URI_DEFAULT;
 const OAUTH_SCOPE = `atproto repo:${BADGE_BLUE_KEYS_NSID}?action=create`;
+
+const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
+const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
+const FIREHOSE_URL = options.firehoseUrl as string | undefined;
+const OFFERING_REFRESH_MS = ((options.offeringRefreshSec as number) ?? 300) * 1000;
+const SKIP_MARKET = (options.skipMarket as boolean) ?? false;
 
 // ===========================================================================
 // Logger — ring buffer for UI log viewer + structured JSON stderr
@@ -102,6 +114,13 @@ let oauthInFlight = false;
 let oauthError: string | null = null;
 let parState: ParState | null = null;
 
+// Market bidder state
+let marketBidder: { beginServe(): Promise<void>; shutdown(): void } | null = null;
+let marketKeypair: MarketKeypair | null = null;
+let marketSignerHex: string | null = null;
+let bidderRelay: RelayRef | null = null;
+let bidderStarted = false;
+
 // ===========================================================================
 // Provider state (4 toggles — too thin for a package)
 // ===========================================================================
@@ -133,6 +152,110 @@ let providerState: ProviderState = (() => {
 
 function saveProviderState(): void {
   try { Deno.writeTextFileSync(STATE_PATH, JSON.stringify(providerState)); } catch { /* degrade */ }
+}
+
+// ===========================================================================
+// Market bidder lifecycle (start/stop on dispatchingEnabled toggle)
+// ===========================================================================
+
+async function startBidder(): Promise<void> {
+  if (SKIP_MARKET) { log.info("bidder: skipped (skip-market)"); return; }
+  if (!oauthSession) { log.warn("bidder: no oauth session"); return; }
+  if (bidderStarted) { log.info("bidder: already running"); return; }
+  try {
+    // Dynamic imports — relative paths avoid deno.json import map entries that
+    // would trigger deno desktop module graph analyzer panic on @atproto/* deps
+    const [
+      { createXrpcRelay },
+      { createMarketBidder },
+      { createComputeProviderHooks },
+      { createOAuthAgent, createDesktopATProto },
+      { loadOrGenerateKeypair },
+      { createPlcDirectoryClient },
+    ] = await Promise.all([
+      import("../../atproto-market/lib/xrpc-relay/mod.ts"),
+      import("../../atproto-market/lib/market-bidder/mod.ts"),
+      import("../../atproto-market/lib/market-bidder-compute/mod.ts"),
+      import("../../atproto-market/lib/market-bidder-agent/mod.ts"),
+      import("../../atproto-market/lib/market-atproto/mod.ts"),
+      import("../../atproto-market/lib/did-plc/mod.ts"),
+    ]);
+
+    const { keypair, hex } = await loadOrCreateMarketKeypair(keychain);
+    marketKeypair = keypair; marketSignerHex = hex;
+
+    const oauthAgent = createOAuthAgent(
+      { did: oauthSession.did, pds: oauthSession.pds, accessJwt: oauthSession.accessJwt,
+        dpopKeyPair: oauthSession.dpopKeyPair, dpopPublicJwk: oauthSession.dpopPublicJwk },
+      keypair,
+      { createDpopProof,
+        serverNonce: oauthServerNonce,
+        refreshSession: async () => {
+          const r = await oauth.refreshSession(oauthSession!);
+          oauthSession = r; keychain.saveSession(r).catch(() => {});
+          return { did: r.did, pds: r.pds, accessJwt: r.accessJwt,
+            dpopKeyPair: r.dpopKeyPair, dpopPublicJwk: r.dpopPublicJwk };
+        },
+        onSessionRefreshed: (s) => { oauthSession = { ...oauthSession!, accessJwt: s.accessJwt,
+          dpopKeyPair: s.dpopKeyPair, dpopPublicJwk: s.dpopPublicJwk }; },
+      },
+    );
+
+    const badgeBlueSigner = loadOrGenerateKeypair(hex) as never;
+    const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: PLC_DIRECTORY_URL });
+    const idResolver = {
+      did: { async resolve(did: string) { try {
+        if (did.startsWith("did:web:")) { const h = did.slice("did:web:".length);
+          const r = await fetch(`https://${h}/.well-known/did.json`);
+          return r.ok ? r.json() as Record<string, unknown> : null; }
+        const r = await fetch(`${PLC_DIRECTORY_URL}/${encodeURIComponent(did)}`);
+        if (!r.ok) return null; return r.json() as Record<string, unknown>;
+      } catch { return null; } } },
+    };
+    const atproto = await createDesktopATProto(logger, oauthAgent, badgeBlueSigner, idResolver as never, plcClient);
+
+    bidderRelay = createXrpcRelay({
+      logger, dispatcherHost: DISPATCHER_HOST,
+      signer: atproto.signer,
+      keypair: { did: keypair.did.bind(keypair), sign: keypair.sign.bind(keypair) },
+    });
+    serve.addRelay(bidderRelay);
+
+    const providers: Array<{
+      serviceId: string; appliesTo: string[];
+      setup?(): Promise<void>; teardown?(): Promise<void>;
+      buildCallbacks(d: Record<string, unknown>): Record<string, unknown>;
+    }> = [];
+
+    marketBidder = await createMarketBidder({
+      logger, serve, atproto, relay: bidderRelay, providers,
+      skipServeBegin: true,
+      offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
+    });
+    await marketBidder.beginServe();
+    bidderStarted = true;
+    log.info("bidder: started", { did: atproto.did, proxyRef: bidderRelay?.proxyRef });
+  } catch (e) {
+    const msg = String(e);
+    // Lexicon not published on user's PDS — bidder starts without allowlist/offering
+    if (msg.includes("Expected an object which includes the \"$type\"") || msg.includes("InvalidRequest")) {
+      log.warn("bidder: PDS does not support market Lexicons — running without allowlist/offering", { pds: oauthSession?.pds });
+      bidderStarted = true;
+      return;
+    }
+    log.error("bidder: start failed", { error: msg });
+    try { bidderRelay?.close(); } catch { /* ignore */ }
+    bidderRelay = null; marketBidder = null;
+    marketKeypair = null; marketSignerHex = null;
+    throw e;
+  }
+}
+
+function stopBidder(): void {
+  if (!bidderStarted) return;
+  try { marketBidder?.shutdown(); bidderRelay?.close(); } catch (e) { log.warn("bidder: stop error", { error: String(e) }); }
+  marketBidder = null; bidderRelay = null; bidderStarted = false;
+  log.info("bidder: stopped");
 }
 
 // ===========================================================================
@@ -180,6 +303,10 @@ urlScheme.register();
       keychain.delete("oauth-session");
     }
   }
+  // Autostart bidder after session restore (if dispatching enabled)
+  if (oauthSession && providerState.dispatchingEnabled && !SKIP_MARKET) {
+    startBidder().catch((e) => log.error("bidder: restore auto-start failed", { error: String(e) }));
+  }
 })();
 
 function toBadgeSession(s: OAuthSession): BadgeBlueKeysSession {
@@ -215,6 +342,15 @@ app.get("/oauth-client-metadata.json", () =>
   }), { headers: { "content-type": "application/json" } }));
 
 app.get("/api/health", () => json({ ok: true, logEntries: LOG_RING.length }));
+
+app.get("/api/bidder/status", () => json({
+  running: bidderStarted,
+  skipMarket: SKIP_MARKET,
+  proxyRef: bidderRelay?.proxyRef ?? null,
+  signerDid: marketKeypair?.did() ?? null,
+  hasSession: !!oauthSession,
+  dispatchingEnabled: providerState.dispatchingEnabled,
+}));
 app.get("/api/logs", () => json({ entries: [...LOG_RING] }));
 
 app.get("/api/atproto/session", () =>
@@ -229,6 +365,12 @@ app.get("/api/state", (c) => {
     oauthInFlight, oauthError, persistentKeyId, associationRecordUri,
     session: oauthSession ? { handle: oauthSession.handle, did: oauthSession.did } : null,
     requestedView,
+    bidder: {
+      running: bidderStarted,
+      skipMarket: SKIP_MARKET,
+      proxyRef: bidderRelay?.proxyRef ?? null,
+      signerDid: marketKeypair?.did() ?? null,
+    },
   });
 });
 
@@ -261,6 +403,9 @@ app.get("/", async (c) => {
     saveProviderState();
     keychain.saveSession(oauthSession).catch(() => {});
     associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!);
+    if (providerState.dispatchingEnabled && !bidderStarted) {
+      startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
+    }
     return new Response(
       `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
@@ -309,8 +454,10 @@ app.post("/api/atproto/cancel-oauth", (c) => {
 
 app.post("/api/atproto/unlink", (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
+  stopBidder();
   oauthSession = null; keychain.delete("oauth-session");
   providerState.acceptScope = null; providerState.linkedAt = null;
+  providerState.dispatchingEnabled = false;
   associationRecordUri = null; saveProviderState();
   return json({ ok: true });
 });
@@ -342,8 +489,28 @@ app.post("/api/state", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   const body = await c.req.json().catch(() => ({}));
   const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope"];
+  const oldDispatch = providerState.dispatchingEnabled;
+  const oldWorkers = providerState.workersEnabled;
+  const oldContainers = providerState.containersEnabled;
   for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
+
+  if (providerState.dispatchingEnabled && !oauthSession) {
+    providerState.dispatchingEnabled = false;
+    saveProviderState();
+    return json({ ok: false, error: "Link your ATProto identity first" }, 400);
+  }
   saveProviderState();
+
+  const needsRestart = bidderStarted && (
+    oldWorkers !== providerState.workersEnabled ||
+    oldContainers !== providerState.containersEnabled
+  );
+  if (needsRestart) stopBidder();
+  if (providerState.dispatchingEnabled && !bidderStarted) {
+    startBidder().catch((e) => log.error("bidder: auto-start failed", { error: String(e) }));
+  } else if (!providerState.dispatchingEnabled && bidderStarted) {
+    stopBidder();
+  }
   return json({ ok: true });
 });
 
@@ -509,6 +676,9 @@ setInterval(async () => {
     saveProviderState();
     keychain.saveSession(oauthSession).catch(() => {});
     associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!);
+    if (providerState.dispatchingEnabled && !bidderStarted) {
+      startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
+    }
   } catch (e) {
     oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
     log.error("url scheme callback error", { error: String(e) });
@@ -519,6 +689,7 @@ log.info("App ready", { attestSupported: attest.isSupported() });
 
 // Signal handlers — ONLY in CLI
 function shutdown(): void {
+  stopBidder();
   serve.shutdown();
   Deno.exit();
 }
