@@ -382,16 +382,22 @@ urlScheme.register();
     await oauth.validateSession(saved);
     oauthSession = saved;
     log.info("session restored and validated", { did: saved.did, handle: saved.handle });
-    associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(saved), persistentKeyId!);
-    log.info("findOrCreateRecord after restore", { associationRecordUri });
+    // Don't block on association record — findOrCreateRecord runs in the
+    // background, matching the post-login callback path.
+    assoc.findOrCreateRecord(toBadgeSession(saved), persistentKeyId!).then((uri) => {
+      associationRecordUri = uri;
+      log.info("findOrCreateRecord after restore", { associationRecordUri });
+    }).catch((e) => log.warn("findOrCreateRecord after restore failed", { error: String(e) }));
   } catch (e) {
     log.warn("session token expired, attempting refresh", { error: String(e) });
     try {
       const refreshed = await oauth.refreshSession(saved);
       oauthSession = refreshed;
       await keychain.saveSession(refreshed);
-      associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(refreshed), persistentKeyId!);
-      log.info("findOrCreateRecord after refresh", { associationRecordUri });
+      assoc.findOrCreateRecord(toBadgeSession(refreshed), persistentKeyId!).then((uri) => {
+        associationRecordUri = uri;
+        log.info("findOrCreateRecord after refresh", { associationRecordUri });
+      }).catch((e2) => log.warn("findOrCreateRecord after refresh failed", { error: String(e2) }));
     } catch (e2) {
       log.warn("session refresh failed, clearing", { error: String(e2) });
       keychain.delete("oauth-session");
