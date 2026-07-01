@@ -54,7 +54,7 @@ cat > /tmp/attest-meta/oauth-client-metadata.json << 'METAEOF'
   "redirect_uris": ["com.fedproxy.attest--johnandersen777-bsky-social:/callback"],
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
-  "scope": "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
+  "scope": "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=create repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=update repo:com.publicdomainrelay.temp.market.offering?action=create repo:com.publicdomainrelay.temp.market.offering?action=update repo:com.publicdomainrelay.temp.market.bid?action=create repo:com.publicdomainrelay.temp.market.bid?action=update repo:com.publicdomainrelay.temp.market.bids.free?action=create repo:com.publicdomainrelay.temp.market.bids.free?action=update repo:com.publicdomainrelay.temp.market.bids.x402?action=create repo:com.publicdomainrelay.temp.market.bids.x402?action=update repo:com.publicdomainrelay.temp.market.receipt?action=create repo:com.publicdomainrelay.temp.market.receipt?action=update repo:com.publicdomainrelay.temp.market.receipts.free?action=create repo:com.publicdomainrelay.temp.market.receipts.free?action=update repo:com.publicdomainrelay.temp.market.receipts.x402?action=create repo:com.publicdomainrelay.temp.market.receipts.x402?action=update repo:com.publicdomainrelay.temp.market.event?action=create repo:com.publicdomainrelay.temp.market.event?action=update repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=create repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=update",
   "token_endpoint_auth_method": "none",
   "client_name": "macOS App Attest"
 }

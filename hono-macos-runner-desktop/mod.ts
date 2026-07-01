@@ -56,7 +56,21 @@ const logger = createStructuredLogger(serviceName);
 
 const OAUTH_CLIENT_ID = (options.oauthClientId as string) || OAUTH_CLIENT_ID_DEFAULT;
 const OAUTH_REDIRECT_URI = (options.oauthRedirectUri as string) || OAUTH_REDIRECT_URI_DEFAULT;
-const OAUTH_SCOPE = `atproto repo:${BADGE_BLUE_KEYS_NSID}?action=create`;
+const BIDDER_SCOPE_COLLECTIONS = [
+  "com.publicdomainrelay.temp.auth.allowlist.rbacDid",
+  "com.publicdomainrelay.temp.market.offering",
+  "com.publicdomainrelay.temp.market.bid",
+  "com.publicdomainrelay.temp.market.bids.free",
+  "com.publicdomainrelay.temp.market.bids.x402",
+  "com.publicdomainrelay.temp.market.receipt",
+  "com.publicdomainrelay.temp.market.receipts.free",
+  "com.publicdomainrelay.temp.market.receipts.x402",
+  "com.publicdomainrelay.temp.market.event",
+  "com.publicdomainrelay.temp.compute.config.wif.simple",
+];
+const OAUTH_SCOPE = `atproto repo:${BADGE_BLUE_KEYS_NSID}?action=create ${
+  BIDDER_SCOPE_COLLECTIONS.map((c) => `repo:${c}?action=create repo:${c}?action=update`).join(" ")
+}`;
 
 const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
@@ -236,18 +250,10 @@ async function startBidder(): Promise<void> {
     bidderStarted = true;
     log.info("bidder: started", { did: atproto.did, proxyRef: bidderRelay?.proxyRef });
   } catch (e) {
-    const msg = String(e);
-    // Lexicon not published on user's PDS — bidder starts without allowlist/offering
-    if (msg.includes("Expected an object which includes the \"$type\"") || msg.includes("InvalidRequest")) {
-      log.warn("bidder: PDS does not support market Lexicons — running without allowlist/offering", { pds: oauthSession?.pds });
-      bidderStarted = true;
-      return;
-    }
-    log.error("bidder: start failed", { error: msg });
+    log.error("bidder: start failed", { error: String(e) });
     try { bidderRelay?.close(); } catch { /* ignore */ }
     bidderRelay = null; marketBidder = null;
     marketKeypair = null; marketSignerHex = null;
-    throw e;
   }
 }
 
