@@ -1,13 +1,13 @@
-// BadgeBlue Keys ATProto implementation — creates and manages attestation→DID
+// BadgeBlue Keys ATProto implementation — creates and manages key→DID
 // association records on the user's PDS. Portable: Web Crypto + fetch only.
+// No attestation dependency — rkey derived from sha256(did + keyId).
 
-import type { AppAttestService } from "@publicdomainrelay/app-attest-abc";
 import {
-  BADGE_BLUE_KEYS_NSID, CborDecoder, extractX5c0, base58btcEncode, extractSpkiDer,
+  BADGE_BLUE_KEYS_NSID, base58btcEncode,
   type BadgeBlueKeysSession,
 } from "@publicdomainrelay/badge-blue-keys-common";
 import type { AssociationService } from "@publicdomainrelay/badge-blue-keys-abc";
-import { sha256, generateDpopKey, createDpopProof } from "@publicdomainrelay/atproto-oauth-fetch";
+import { sha256, createDpopProof } from "@publicdomainrelay/atproto-oauth-fetch";
 
 const enc = new TextEncoder();
 
@@ -15,26 +15,25 @@ const enc = new TextEncoder();
 // AssociationService factory
 // ===========================================================================
 
-export function createAssociationService(opts: {
-  attestService: AppAttestService;
-}): AssociationService {
-  const { attestService } = opts;
-  let cachedDidKey: string | null = null;
+export function createAssociationService(): AssociationService {
+  let cachedRkey: string | null = null;
+  let cachedKey: string | null = null;
 
   return {
     async computeRkey(persistentKeyId: string, did: string): Promise<string> {
-      if (cachedDidKey) return cachedDidKey;
+      const cacheKey = `${did}:${persistentKeyId}`;
+      if (cachedRkey && cachedKey === cacheKey) return cachedRkey;
       if (!persistentKeyId || !did) throw new Error("not ready");
-      const challengeHash = await sha256(enc.encode(did));
-      const attestationBytes = attestService.attestKey(persistentKeyId, challengeHash);
-      const certDer = extractX5c0(attestationBytes);
-      const spkiDer = extractSpkiDer(certDer);
-      const cryptoKey = await crypto.subtle.importKey(
-        "spki", spkiDer as unknown as BufferSource, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"],
-      );
-      const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", cryptoKey));
-      cachedDidKey = `did:key:z${base58btcEncode(new Uint8Array([0x80, 0x24, ...rawKey]))}`;
-      return cachedDidKey;
+
+      // Deterministic rkey from sha256(did + ":" + keyId)
+      const hash = await sha256(enc.encode(`${did}:${persistentKeyId}`));
+      // Take first 24 bytes, base58btc encode, use first 32 chars as rkey
+      const rkeyRaw = base58btcEncode(hash.slice(0, 24));
+      const rkey = rkeyRaw.slice(0, 32);
+
+      cachedKey = cacheKey;
+      cachedRkey = rkey;
+      return rkey;
     },
 
     async createRecord(
@@ -44,9 +43,6 @@ export function createAssociationService(opts: {
     ): Promise<string> {
       if (!session || !persistentKeyId) throw new Error("not ready");
       const { did, pds, accessJwt, dpopKeyPair, dpopPublicJwk } = session;
-      const challengeHash = await sha256(enc.encode(did));
-      const attestationHex = Array.from(attestService.attestKey(persistentKeyId, challengeHash))
-        .map((b) => b.toString(16).padStart(2, "0")).join("");
       const rkey = await this.computeRkey(persistentKeyId, did);
       const createEndpoint = `${pds}/xrpc/com.atproto.repo.createRecord`;
       const body = JSON.stringify({
@@ -56,7 +52,6 @@ export function createAssociationService(opts: {
         record: {
           $type: BADGE_BLUE_KEYS_NSID,
           keyId: persistentKeyId,
-          attestation: attestationHex,
           challenge: did,
           service,
           createdAt: new Date().toISOString(),
@@ -127,11 +122,9 @@ export function createAssociationService(opts: {
           return data.uri || null;
         }
         const errBody = await res.json().catch(() => ({}));
-        // Record doesn't exist, create it
         if (res.status === 404 || errBody.error === "RecordNotFound") {
           return this.createRecord(session, persistentKeyId);
         }
-        // Other error — don't auto-create
         console.error("badge-blue-keys: getRecord failed", res.status, JSON.stringify(errBody));
         return null;
       } catch (e) {

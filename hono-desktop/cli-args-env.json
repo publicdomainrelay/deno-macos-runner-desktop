@@ -1,0 +1,69 @@
+{
+  "name": "hono-desktop",
+  "description": "Portable compute provider — web UI + ATProto OAuth + market bidder",
+  "options": {
+    "service-name": {
+      "type": "string",
+      "description": "Service name for logging",
+      "env": "SERVICE_NAME",
+      "default": "hono-desktop"
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Hostname to bind HTTP server",
+      "env": "HOSTNAME",
+      "default": "0.0.0.0"
+    },
+    "port": {
+      "type": "number",
+      "description": "Port to bind HTTP server (0 = random)",
+      "env": "PORT",
+      "default": 0
+    },
+    "storage-dir": {
+      "type": "string",
+      "description": "Directory for key storage and session persistence",
+      "env": "STORAGE_DIR"
+    },
+    "state-path": {
+      "type": "string",
+      "description": "Path to provider state JSON",
+      "env": "STATE_PATH"
+    },
+    "oauth-client-id": {
+      "type": "string",
+      "description": "OAuth client_id URL",
+      "env": "OAUTH_CLIENT_ID",
+      "default": "https://attest--johnandersen777-bsky-social.fedproxy.com/oauth-client-metadata.json"
+    },
+    "oauth-redirect-uri": {
+      "type": "string",
+      "description": "OAuth redirect URI (loopback or custom URL scheme)",
+      "env": "OAUTH_REDIRECT_URI",
+      "default": "http://127.0.0.1:PORT/"
+    },
+    "dispatcher-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host for market bidder",
+      "env": "RELAY_DISPATCHER_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory URL for DID resolution",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "offering-refresh-sec": {
+      "type": "number",
+      "description": "Seconds between offering record re-commits (0 to disable)",
+      "env": "OFFERING_REFRESH_SEC",
+      "default": 300
+    },
+    "skip-market": {
+      "type": "boolean",
+      "description": "Skip market bidder initialization",
+      "env": "SKIP_MARKET"
+    }
+  }
+}

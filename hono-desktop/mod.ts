@@ -1,20 +1,25 @@
 // @ts-nocheck — Deno desktop runtime APIs not in compile-time types
-// macOS App Attest — Deno Desktop App
+// Portable Compute Provider — Linux container / headless server
 //
 // Thin CLI entrypoint composing ABC-layered packages:
-//   app-attest-darwin  — DeviceCheck FFI + Keychain
-//   atproto-oauth-fetch — ATProto OAuth (PAR + PKCE + DPoP)
-//   badge-blue-keys-atproto — attestation→DID association records
+//   app-attest-none          — software keys (portable)
+//   secret-store-chain       — darwin → gnome-keyring → filesystem fallback
+//   atproto-oauth-fetch      — ATProto OAuth (PAR + PKCE + DPoP)
+//   badge-blue-keys-atproto  — attestation→DID association records
 
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createStructuredLogger, type StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import { createServe, type ServeHandle } from "@publicdomainrelay/serve";
 import { Hono } from "@hono/hono";
 import {
-  createAppAttestService, createKeychainStore, createUrlSchemePoller,
-} from "@publicdomainrelay/app-attest-darwin";
+  createAppAttestService, createRichKeychainStore,
+} from "@publicdomainrelay/app-attest-none";
+import { createFilesystemKeychainStore } from "@publicdomainrelay/secret-store-filesystem";
+import { createGnomeKeychainStore } from "@publicdomainrelay/secret-store-gnome";
+import { createWin32KeychainStore } from "@publicdomainrelay/secret-store-win32";
+import { buildStandardChain } from "@publicdomainrelay/secret-store-chain";
 import type { AppAttestService } from "@publicdomainrelay/app-attest-abc";
-import { createOAuthFlow, generateDpopKey, type ParState } from "@publicdomainrelay/atproto-oauth-fetch";
+import { createOAuthFlow, type ParState } from "@publicdomainrelay/atproto-oauth-fetch";
 import type { OAuthFlow } from "@publicdomainrelay/atproto-oauth-abc";
 import type { OAuthSession } from "@publicdomainrelay/atproto-oauth-common";
 import {
@@ -23,19 +28,15 @@ import {
 import { createAssociationService } from "@publicdomainrelay/badge-blue-keys-atproto";
 import type { AssociationService } from "@publicdomainrelay/badge-blue-keys-abc";
 import { BADGE_BLUE_KEYS_NSID, type BadgeBlueKeysSession } from "@publicdomainrelay/badge-blue-keys-common";
-import { TRAY_ICON_BASE64 } from "../icon.ts";
 import {
-  TRAY_STYLE, TRAY_HTML, TRAY_PANEL_WIDTH_HOME, TRAY_PANEL_WIDTH_SETTINGS,
+  TRAY_STYLE, TRAY_HTML,
 } from "./tray-ui.ts";
 
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
-// Market bidder — dynamic imports in startBidder() avoid deno desktop
-// module graph analyzer walking @atproto/* npm deps.
-import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
+// Market bidder — dynamic imports in startBidder()
+import { loadOrCreateMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
 import type { RelayRef } from "@publicdomainrelay/serve";
-// Static import ensures deno compile bundles this file. Content extracted
-// at runtime to cache dir so copySystemctlShim finds it without fetch().
 import systemctlShimSource from "../../hono-compute-provider/lib/compute-provider-local/systemctl-shim.ts" with { type: "text" };
 
 // ===========================================================================
@@ -48,12 +49,12 @@ try {
 } catch { /* optional */ }
 
 const { options } = await new Command(
-  "CONFIG_PATH_HONO_MACOS_RUNNER_DESKTOP",
+  "CONFIG_PATH_HONO_DESKTOP",
   cliArgsEnv,
   runtimeConfig,
 ).resolve();
 
-const serviceName = (options.serviceName as string) ?? "macos-runner-desktop";
+const serviceName = (options.serviceName as string) ?? "hono-desktop";
 const logger = createStructuredLogger(serviceName);
 
 const OAUTH_CLIENT_ID = (options.oauthClientId as string) || OAUTH_CLIENT_ID_DEFAULT;
@@ -79,9 +80,10 @@ const OAUTH_SCOPE = `atproto ${
 
 const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
-const FIREHOSE_URL = options.firehoseUrl as string | undefined;
 const OFFERING_REFRESH_MS = ((options.offeringRefreshSec as number) ?? 300) * 1000;
 const SKIP_MARKET = (options.skipMarket as boolean) ?? false;
+const HOSTNAME = (options.hostname as string) || "0.0.0.0";
+const PORT = (options.port as number) || 0;
 
 // ===========================================================================
 // Logger — ring buffer for UI log viewer + structured JSON stderr
@@ -105,13 +107,37 @@ const log = {
 };
 
 // ===========================================================================
-// Services (from ABC-layered packages)
+// Services — portable attest + platform-native secret store chain
 // ===========================================================================
 
-const bridgePath = (options.bridgePath as string) || "./devicecheck_bridge.dylib";
-const attest: AppAttestService = createAppAttestService({ bridgePath, logger });
-const keychain = createKeychainStore({ bridgePath, logger });
-const urlScheme = createUrlSchemePoller({ bridgePath, logger });
+const storageDir = (options.storageDir as string) || undefined;
+
+// Build secret store chain: win32 CredMan → gnome-keyring → filesystem
+const gnomeStore = createGnomeKeychainStore({ logger });
+const win32Store = createWin32KeychainStore({ logger });
+const fsStore = createFilesystemKeychainStore({ storageDir, logger });
+
+// Probe platform stores for availability
+let win32Available = false;
+let gnomeAvailable = false;
+try {
+  win32Available = (win32Store as ReturnType<typeof createWin32KeychainStore>).isAvailable();
+} catch { /* not on Windows or advapi32 not loadable */ }
+try {
+  gnomeAvailable = await (gnomeStore as ReturnType<typeof createGnomeKeychainStore>).isAvailable();
+} catch { /* gnome-keyring not running */ }
+
+const secretStore = buildStandardChain({
+  win32Store,
+  win32Available,
+  gnomeStore,
+  gnomeAvailable,
+  filesystemStore: fsStore,
+  logger,
+});
+
+const attest: AppAttestService = createAppAttestService({ keychain: secretStore, logger });
+const keychain = createRichKeychainStore(secretStore, { logger });
 
 const oauth: OAuthFlow & { startAuth: (handle: string) => Promise<{ did: string; authServer: string; authUrl: string; parState: ParState }> } = createOAuthFlow({
   clientId: OAUTH_CLIENT_ID,
@@ -122,7 +148,7 @@ const oauth: OAuthFlow & { startAuth: (handle: string) => Promise<{ did: string;
 const assoc: AssociationService = createAssociationService();
 
 // ===========================================================================
-// Application state (CLI-owned)
+// Application state
 // ===========================================================================
 
 let oauthSession: OAuthSession | null = null;
@@ -133,16 +159,14 @@ let oauthInFlight = false;
 let oauthError: string | null = null;
 let parState: ParState | null = null;
 
-// Market bidder state
 let marketBidder: { beginServe(): Promise<void>; shutdown(): void } | null = null;
 let marketKeypair: MarketKeypair | null = null;
-let marketSignerHex: string | null = null;
 let bidderRelay: RelayRef | null = null;
 let bidderServe: ServeHandle | null = null;
 let bidderStarted = false;
 
 // ===========================================================================
-// Provider state (4 toggles — too thin for a package)
+// Provider state (4 toggles)
 // ===========================================================================
 
 interface ProviderState {
@@ -175,7 +199,20 @@ function saveProviderState(): void {
 }
 
 // ===========================================================================
-// Market bidder lifecycle (start/stop on dispatchingEnabled toggle)
+// Open URL — platform-aware, falls back to logging
+// ===========================================================================
+
+function openUrl(url: string): void {
+  const cmd = Deno.build.os === "darwin" ? "open" : "xdg-open";
+  new Deno.Command(cmd, { args: [url] }).spawn().status.then((s) => {
+    if (!s.success) log.info("browser open failed, navigate manually", { url });
+  }).catch(() => {
+    log.info("navigate to this URL to continue", { url });
+  });
+}
+
+// ===========================================================================
+// Market bidder lifecycle
 // ===========================================================================
 
 async function startBidder(): Promise<void> {
@@ -183,8 +220,6 @@ async function startBidder(): Promise<void> {
   if (!oauthSession) { log.warn("bidder: no oauth session"); return; }
   if (bidderStarted) { log.info("bidder: already running"); return; }
   try {
-    // Dynamic imports — relative paths avoid deno.json import map entries that
-    // would trigger deno desktop module graph analyzer panic on @atproto/* deps
     const [
       { createXrpcRelay },
       { createMarketBidder },
@@ -208,7 +243,7 @@ async function startBidder(): Promise<void> {
     ]);
 
     const { keypair, hex } = await loadOrCreateMarketKeypair(keychain);
-    marketKeypair = keypair; marketSignerHex = hex;
+    marketKeypair = keypair;
 
     const oauthAgent = createOAuthAgent(
       { did: oauthSession.did, pds: oauthSession.pds, accessJwt: oauthSession.accessJwt,
@@ -244,36 +279,34 @@ async function startBidder(): Promise<void> {
       keypair: { did: keypair.did.bind(keypair), sign: keypair.sign.bind(keypair) },
     });
 
-    // Bidder gets its own serve (separate from main desktop serve) so market
-    // routes + OIDC issuer mount before any request builds the Hono matcher.
-    // Matches hono-bidder pattern: one serve per relay, routes mounted first.
     bidderServe = createServe({
       logger,
       tcp: { addr: "127.0.0.1", port: 0 },
       relays: [bidderRelay],
     });
 
-    // Ensure container runtime is ready on macOS before provisioning.
-    if (Deno.build.os === "darwin" && providerState.containersEnabled) {
+    // Container runtime init — only if containers enabled and container CLI available
+    if (providerState.containersEnabled) {
       try {
         const p = new Deno.Command("container", { args: ["system", "start"] }).spawn();
-        await p.status;
-        log.info("bidder: container system start ok");
-        // Write bundled shim to cache so copySystemctlShim finds it.
-        const home = Deno.env.get("HOME") ?? Deno.cwd();
-        const cacheDir = `${home}/.cache/pdr-compute`;
-        await Deno.mkdir(cacheDir, { recursive: true });
-        await Deno.writeTextFile(`${cacheDir}/systemctl-shim-ubuntu.ts`, systemctlShimSource);
-        const { createContainerBackend } = await import("../../hono-compute-provider/lib/container-backend-container/mod.ts");
-        const backend = createContainerBackend();
-        const imgTag = "container-runner-ubuntu:latest";
-        if (!(await backend.imageExists(imgTag))) {
-          const { buildContainerImage } = await import("../../hono-compute-provider/lib/compute-provider-local/mod.ts");
-          await buildContainerImage(backend, "ubuntu");
+        const status = await p.status;
+        if (status.success) {
+          log.info("bidder: container system start ok");
+          const home = Deno.env.get("HOME") ?? "/tmp";
+          const cacheDir = `${home}/.cache/pdr-compute`;
+          await Deno.mkdir(cacheDir, { recursive: true });
+          await Deno.writeTextFile(`${cacheDir}/systemctl-shim-ubuntu.ts`, systemctlShimSource);
+          const { createContainerBackend } = await import("../../hono-compute-provider/lib/container-backend-container/mod.ts");
+          const backend = createContainerBackend();
+          const imgTag = "container-runner-ubuntu:latest";
+          if (!(await backend.imageExists(imgTag))) {
+            const { buildContainerImage } = await import("../../hono-compute-provider/lib/compute-provider-local/mod.ts");
+            await buildContainerImage(backend, "ubuntu");
+          }
+          log.info("bidder: container image ready");
         }
-        log.info("bidder: container image ready");
       } catch (e) {
-        log.warn("bidder: container init failed", { error: String(e) });
+        log.warn("bidder: container init skipped (container CLI not available)", { error: String(e) });
       }
     }
 
@@ -304,15 +337,9 @@ async function startBidder(): Promise<void> {
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
     });
-    // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
-    // isn't built yet (no requests have arrived on this serve).
     await marketBidder.beginServe();
-    // Now start the serve — connects relay, fires onConnected (mounts OIDC).
     await bidderServe.beginServe();
 
-    // Create offering with correct appliesTo + relay endpoint URL now that
-    // the relay has connected and proxyRef is set. Old offerings from before
-    // providers existed have empty appliesTo — requester skips them.
     try {
       const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
       const proxyRef = bidderRelay?.proxyRef ?? "";
@@ -338,7 +365,7 @@ async function startBidder(): Promise<void> {
     try { bidderRelay?.close(); } catch { /* ignore */ }
     try { bidderServe?.shutdown(); } catch { /* ignore */ }
     bidderRelay = null; bidderServe = null; marketBidder = null;
-    marketKeypair = null; marketSignerHex = null;
+    marketKeypair = null;
   }
 }
 
@@ -350,54 +377,56 @@ function stopBidder(): void {
 }
 
 // ===========================================================================
-// Persistent key + session restore
+// Persistent key + session restore (async init)
 // ===========================================================================
+
+function toBadgeSession(s: OAuthSession): BadgeBlueKeysSession {
+  return { did: s.did, pds: s.pds, accessJwt: s.accessJwt, dpopKeyPair: s.dpopKeyPair, dpopPublicJwk: s.dpopPublicJwk };
+}
 
 async function initKeysAndSession(): Promise<void> {
   persistentKeyId = keychain.getDeviceKeyId();
   if (persistentKeyId) {
-    log.info("persistent device key loaded from keychain", { keyId: persistentKeyId });
+    log.info("persistent device key loaded", { keyId: persistentKeyId });
   } else {
     try {
       persistentKeyId = await attest.generateKey();
       keychain.saveDeviceKeyId(persistentKeyId).then((ok) =>
-        log.info("persistent device key generated and saved", { keyId: persistentKeyId, ok }),
-      ).catch((e) => log.error("failed to save device key to keychain", { error: String(e) }));
+        log.info("device key generated and saved", { keyId: persistentKeyId, ok }),
+      ).catch((e) => log.error("failed to save device key", { error: String(e) }));
     } catch (e) {
       log.error("failed to generate persistent key", { error: String(e) });
     }
   }
-  urlScheme.register();
 
   const saved = await keychain.loadSession();
   if (!saved) {
-    log.info("no saved session found in keychain, skipping restore");
+    log.info("no saved session, skipping restore");
     return;
   }
-  log.info("saved session loaded from keychain, validating", { did: saved.did, handle: saved.handle });
+  log.info("saved session loaded, validating", { did: saved.did, handle: saved.handle });
   try {
     await oauth.validateSession(saved);
     oauthSession = saved;
     log.info("session restored and validated", { did: saved.did, handle: saved.handle });
     assoc.findOrCreateRecord(toBadgeSession(saved), persistentKeyId!).then((uri) => {
       associationRecordUri = uri;
-      log.info("findOrCreateRecord after restore", { associationRecordUri });
     }).catch((e) => log.warn("findOrCreateRecord after restore failed", { error: String(e) }));
   } catch (e) {
-    log.warn("session token expired, attempting refresh", { error: String(e) });
+    log.warn("session expired, attempting refresh", { error: String(e) });
     try {
       const refreshed = await oauth.refreshSession(saved);
       oauthSession = refreshed;
       await keychain.saveSession(refreshed);
       assoc.findOrCreateRecord(toBadgeSession(refreshed), persistentKeyId!).then((uri) => {
         associationRecordUri = uri;
-        log.info("findOrCreateRecord after refresh", { associationRecordUri });
       }).catch((e2) => log.warn("findOrCreateRecord after refresh failed", { error: String(e2) }));
     } catch (e2) {
       log.warn("session refresh failed, clearing", { error: String(e2) });
       keychain.delete("oauth-session");
     }
   }
+
   // Autostart bidder after session restore
   if (oauthSession && OAUTH_SCOPE.includes("rpc:")) {
     try {
@@ -427,11 +456,6 @@ async function initKeysAndSession(): Promise<void> {
     startBidder().catch((e) => log.error("bidder: restore auto-start failed", { error: String(e) }));
   }
 }
-initKeysAndSession();
-
-function toBadgeSession(s: OAuthSession): BadgeBlueKeysSession {
-  return { did: s.did, pds: s.pds, accessJwt: s.accessJwt, dpopKeyPair: s.dpopKeyPair, dpopPublicJwk: s.dpopPublicJwk };
-}
 
 // ===========================================================================
 // Per-launch CSRF token + Hono app
@@ -446,7 +470,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-// -- GET routes (unauthenticated) --
+// -- GET routes --
 
 app.get("/oauth-client-metadata.json", () =>
   new Response(JSON.stringify({
@@ -478,13 +502,11 @@ app.get("/api/atproto/session", () =>
     ? json({ loggedIn: true, did: oauthSession.did, handle: oauthSession.handle })
     : json({ loggedIn: false }));
 
-app.get("/api/state", (c) => {
-  const requestedView = c.req.query("requestedView") || null;
+app.get("/api/state", (_c) => {
   return json({
     ...providerState,
     oauthInFlight, oauthError, persistentKeyId, associationRecordUri,
     session: oauthSession ? { handle: oauthSession.handle, did: oauthSession.did } : null,
-    requestedView,
     bidder: {
       running: bidderStarted,
       skipMarket: SKIP_MARKET,
@@ -498,18 +520,26 @@ app.get("/tray", () =>
   new Response(TRAY_HTML.replace("__APP_TOKEN__", APP_TOKEN),
     { headers: { "content-type": "text/html; charset=utf-8" } }));
 
-// OAuth callback from system browser
-app.get("/", async (c) => {
+// Root: landing page or OAuth callback
+app.get("/", (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
   const iss = c.req.query("iss");
-  if (!code || !state || !iss || !parState || state !== parState.state) {
-    return new Response("Invalid callback", { status: 400 });
+
+  // OAuth callback
+  if (code && state && iss && parState && state === parState.state) {
+    return handleOAuthCallback(code, state, iss);
   }
+
+  // Landing page: redirect to tray UI
+  return Response.redirect("/tray", 302);
+});
+
+async function handleOAuthCallback(code: string, state: string, iss: string): Promise<Response> {
   try {
     const result = await oauth.handleCallback(
-      code, state, iss, parState.state, parState.codeVerifier,
-      parState.dpopKeyPair, parState.dpopPublicJwk, oauthServerNonce,
+      code, state, iss, parState!.state, parState!.codeVerifier,
+      parState!.dpopKeyPair, parState!.dpopPublicJwk, oauthServerNonce,
     );
     oauthSession = {
       accessJwt: result.accessToken, refreshJwt: result.refreshToken,
@@ -522,36 +552,24 @@ app.get("/", async (c) => {
     providerState.linkedAt = new Date().toISOString();
     saveProviderState();
     keychain.saveSession(oauthSession).catch(() => {});
-    // Start bidder immediately — don't block on association record.
     if (providerState.dispatchingEnabled && !bidderStarted) {
       startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
     }
     assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!).then((uri) => {
       associationRecordUri = uri;
-      log.info("findOrCreateRecord after login", { associationRecordUri });
     }).catch((e) => log.warn("findOrCreateRecord after login failed", { error: String(e) }));
     return new Response(
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:system-ui,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     oauthInFlight = false; oauthError = msg;
     log.error("oauth: callback error", { error: msg });
-    return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auth Error</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#f38ba8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}</style></head><body><div><h2>Authentication Error</h2><p>${msg}</p></div></body></html>`, { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auth Error</title><style>body{font-family:system-ui,sans-serif;background:#1e1e2e;color:#f38ba8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}</style></head><body><div><h2>Authentication Error</h2><p>${msg}</p></div></body></html>`, { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
   }
-});
+}
 
 // -- POST routes (CSRF-protected) --
-
-app.post("/api/tray-resize", async (c) => {
-  if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
-  const body = await c.req.json().catch(() => ({}));
-  const width = Number(body.width); const height = Number(body.height);
-  if (!Number.isFinite(width) || width <= 0) return json({ error: "invalid width" }, 400);
-  if (!Number.isFinite(height) || height <= 0) return json({ error: "invalid height" }, 400);
-  resizeTrayPanel(width, height);
-  return json({ ok: true });
-});
 
 app.post("/api/atproto/start-oauth", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
@@ -562,7 +580,7 @@ app.post("/api/atproto/start-oauth", async (c) => {
     oauthInFlight = true; oauthError = null;
     const result = await oauth.startAuth(handle);
     parState = result.parState;
-    new Deno.Command("open", { args: [result.authUrl] }).spawn().status.catch(() => {});
+    openUrl(result.authUrl);
     return json({ ok: true, did: result.did });
   } catch (e) {
     oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
@@ -605,7 +623,7 @@ app.post("/api/open-external", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const target = String(body.url ?? "").trim();
   if (!target || !target.startsWith("https://")) return json({ error: "invalid url" }, 400);
-  new Deno.Command("open", { args: [target] }).spawn().status.catch(() => {});
+  openUrl(target);
   return json({ ok: true });
 });
 
@@ -613,7 +631,6 @@ app.post("/api/state", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   const body = await c.req.json().catch(() => ({}));
   const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope"];
-  const oldDispatch = providerState.dispatchingEnabled;
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
   for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
@@ -653,165 +670,28 @@ app.post("/api/atproto/create-key-record", async (c) => {
 });
 
 // ===========================================================================
-// Window + tray management (Deno desktop APIs — CLI layer only)
-// ===========================================================================
-
-let sentinelWindow: Deno.BrowserWindow | null = null;
-let trayHandle: Deno.Tray | null = null;
-let trayPanelHandle: Deno.TrayPanel | null = null;
-let trayPopoverWindow: Deno.BrowserWindow | null = null;
-let requestedTrayView: string | null = null;
-
-function resizeTrayPanel(contentWidth: number, contentHeight: number): void {
-  const width = Math.max(1, Math.round(contentWidth));
-  const height = Math.max(1, Math.round(contentHeight));
-  try {
-    const win = trayPanelHandle?.window ?? trayPopoverWindow;
-    if (!win) return;
-    win.setSize(width, height);
-    const bounds = trayHandle?.getBounds();
-    if (bounds) {
-      win.setPosition(
-        Math.round(bounds.x + bounds.width / 2 - width / 2),
-        Math.round(bounds.y + bounds.height),
-      );
-    }
-  } catch (e) {
-    log.warn("Tray panel resize failed", { error: String(e) });
-  }
-}
-
-function showTrayPanel(view?: string): void {
-  if (view) requestedTrayView = view;
-  if (trayPanelHandle) trayPanelHandle.show();
-  else if (trayPopoverWindow) {
-    try {
-      const bounds = trayHandle?.getBounds();
-      if (bounds) trayPopoverWindow.setPosition(bounds.x, bounds.y + bounds.height);
-    } catch { /* ignore */ }
-    trayPopoverWindow.show();
-    trayPopoverWindow.focus();
-  }
-}
-
-function setupWindowsAndTray(port: number): void {
-  const startupWindow = new Deno.BrowserWindow({ title: "Compute Provider" });
-  sentinelWindow = new Deno.BrowserWindow({
-    title: "", width: 1, height: 1, x: -10000, y: -10000, resizable: false,
-  });
-
-  const tray = new Deno.Tray();
-  trayHandle = tray;
-  tray.setTooltip("Compute Provider");
-  try {
-    const binaryStr = atob(TRAY_ICON_BASE64);
-    const iconBytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) iconBytes[i] = binaryStr.charCodeAt(i);
-    tray.setIcon(iconBytes);
-  } catch { /* degrade */ }
-  tray.setMenu([
-    { item: { label: "Open Settings…", id: "settings", enabled: true } },
-    "separator",
-    { item: { label: "Quit", id: "quit", enabled: true } },
-  ]);
-  tray.addEventListener("menuclick", (e) => {
-    if (e.detail.id === "settings") showTrayPanel("identity");
-    if (e.detail.id === "quit") Deno.exit(0);
-  });
-
-  let panel: Deno.TrayPanel | null = null;
-  try {
-    panel = tray.attachPanel({
-      url: `http://127.0.0.1:${port}/tray`,
-      width: TRAY_PANEL_WIDTH_HOME, height: 1,
-    });
-    trayPanelHandle = panel;
-  } catch { /* fallback to popover */ }
-
-  if (!panel) {
-    const popover = new Deno.BrowserWindow({
-      title: "", width: TRAY_PANEL_WIDTH_HOME, height: 1, frameless: true, noActivate: true,
-    });
-    trayPopoverWindow = popover;
-    popover.navigate(`http://127.0.0.1:${port}/tray`);
-    popover.hide();
-    tray.addEventListener("click", () => {
-      try {
-        const bounds = tray.getBounds();
-        if (bounds) popover.setPosition(bounds.x, bounds.y + bounds.height);
-      } catch { /* ignore */ }
-      popover.show(); popover.focus();
-    });
-    popover.addEventListener("blur", () => popover.hide());
-  }
-
-  // Dock menu (macOS-only)
-  try {
-    Deno.dock.setMenu([
-      { item: { label: "Open Settings…", id: "settings", enabled: true } },
-    ]);
-    Deno.dock.addEventListener("menuclick", (e) => {
-      if (e.detail.id === "settings") showTrayPanel("identity");
-    });
-  } catch { /* no-op elsewhere */ }
-
-  startupWindow.hide();
-  try { Deno.dock.setVisible(false); } catch { /* degrade */ }
-}
-
-// ===========================================================================
 // Serve
 // ===========================================================================
 
 const serve = createServe({
   logger,
-  tcp: { addr: "127.0.0.1", port: 0 },
+  tcp: { addr: HOSTNAME, port: PORT },
 });
 serve.app.route("/", app as never);
 await serve.beginServe();
 const SERVE_PORT = serve.tcpPort;
-log.info("HTTP server started", { port: SERVE_PORT });
-setupWindowsAndTray(SERVE_PORT);
+log.info("HTTP server started", { port: SERVE_PORT, hostname: HOSTNAME });
 
-// URL scheme poll (macOS kAEGetURL)
-setInterval(async () => {
-  const urlStr = urlScheme.poll();
-  if (!urlStr) return;
-  log.info("url scheme callback received", { url: urlStr });
-  try {
-    const u = new URL(urlStr);
-    const code = u.searchParams.get("code");
-    const state = u.searchParams.get("state");
-    const iss = u.searchParams.get("iss");
-    if (!code || !state || !iss || !parState || state !== parState.state) return;
-    const result = await oauth.handleCallback(
-      code, state, iss, parState.state, parState.codeVerifier,
-      parState.dpopKeyPair, parState.dpopPublicJwk, oauthServerNonce,
-    );
-    oauthSession = {
-      accessJwt: result.accessToken, refreshJwt: result.refreshToken,
-      did: result.did, handle: result.handle, pds: result.pds,
-      dpopKeyPair: result.dpopKeyPair!, dpopPublicJwk: result.dpopPublicJwk!,
-    };
-    oauthServerNonce = result.oauthServerNonce;
-    parState = null; oauthInFlight = false; oauthError = null;
-    if (!providerState.acceptScope) providerState.acceptScope = "only_me";
-    providerState.linkedAt = new Date().toISOString();
-    saveProviderState();
-    keychain.saveSession(oauthSession).catch(() => {});
-    associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!);
-    if (providerState.dispatchingEnabled && !bidderStarted) {
-      startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
-    }
-  } catch (e) {
-    oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
-    log.error("url scheme callback error", { error: String(e) });
-  }
-}, 500);
+// Initialize keys and restore session
+await initKeysAndSession();
 
-log.info("App ready", { attestSupported: attest.isSupported() });
+log.info("App ready", { attestSupported: attest.isSupported(), port: SERVE_PORT });
+log.info(`Open http://localhost:${SERVE_PORT}/tray to manage`);
 
-// Signal handlers — ONLY in CLI
+// ===========================================================================
+// Signal handlers
+// ===========================================================================
+
 function shutdown(): void {
   stopBidder();
   serve.shutdown();

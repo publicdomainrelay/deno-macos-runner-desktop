@@ -1,0 +1,25 @@
+{
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "imports": {
+    "@publicdomainrelay/cli-args-env": "jsr:@publicdomainrelay/cli-args-env@^0",
+    "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
+    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
+    "@publicdomainrelay/app-attest-none": "jsr:@publicdomainrelay/app-attest-none@^0",
+    "@publicdomainrelay/app-attest-abc": "jsr:@publicdomainrelay/app-attest-abc@^0",
+    "@publicdomainrelay/atproto-oauth-abc": "jsr:@publicdomainrelay/atproto-oauth-abc@^0",
+    "@publicdomainrelay/atproto-oauth-common": "jsr:@publicdomainrelay/atproto-oauth-common@^0",
+    "@publicdomainrelay/atproto-oauth-fetch": "jsr:@publicdomainrelay/atproto-oauth-fetch@^0",
+    "@publicdomainrelay/badge-blue-keys-abc": "jsr:@publicdomainrelay/badge-blue-keys-abc@^0",
+    "@publicdomainrelay/badge-blue-keys-common": "jsr:@publicdomainrelay/badge-blue-keys-common@^0",
+    "@publicdomainrelay/badge-blue-keys-atproto": "jsr:@publicdomainrelay/badge-blue-keys-atproto@^0",
+    "@publicdomainrelay/market-bidder-keys": "jsr:@publicdomainrelay/market-bidder-keys@^0",
+    "@hono/hono": "jsr:@hono/hono@^4"
+  },
+  "compile": {
+    "include": ["cli-args-env.json", "config.json"]
+  },
+  "publish": {
+    "include": ["cli-args-env.json"]
+  }
+}

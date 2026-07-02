@@ -7,10 +7,16 @@
     "lib/abc/atproto-oauth",
     "lib/abc/badge-blue-keys",
     "lib/app-attest-darwin",
+    "lib/app-attest-none",
+    "lib/secret-store-filesystem",
+    "lib/secret-store-gnome",
+    "lib/secret-store-win32",
+    "lib/secret-store-chain",
     "lib/atproto-oauth-fetch",
     "lib/badge-blue-keys-atproto",
     "lib/market-bidder-keys",
-    "hono-macos-runner-desktop"
+    "hono-macos-runner-desktop",
+    "hono-desktop"
   ],
   "nodeModulesDir": "auto",
   "imports": {
@@ -29,6 +35,11 @@
     "@publicdomainrelay/atproto-oauth-abc": "./lib/abc/atproto-oauth/mod.ts",
     "@publicdomainrelay/badge-blue-keys-abc": "./lib/abc/badge-blue-keys/mod.ts",
     "@publicdomainrelay/app-attest-darwin": "./lib/app-attest-darwin/mod.ts",
+    "@publicdomainrelay/app-attest-none": "./lib/app-attest-none/mod.ts",
+    "@publicdomainrelay/secret-store-filesystem": "./lib/secret-store-filesystem/mod.ts",
+    "@publicdomainrelay/secret-store-gnome": "./lib/secret-store-gnome/mod.ts",
+    "@publicdomainrelay/secret-store-win32": "./lib/secret-store-win32/mod.ts",
+    "@publicdomainrelay/secret-store-chain": "./lib/secret-store-chain/mod.ts",
     "@publicdomainrelay/atproto-oauth-fetch": "./lib/atproto-oauth-fetch/mod.ts",
     "@publicdomainrelay/badge-blue-keys-atproto": "./lib/badge-blue-keys-atproto/mod.ts",
     "@publicdomainrelay/market-bidder-keys": "./lib/market-bidder-keys/mod.ts",
@@ -54,18 +65,5 @@
     "@publicdomainrelay/hono-factory-market-atproto": "../atproto-market/lib/hono-factory-market-atproto/mod.ts",
     "@publicdomainrelay/compute-provider-abc": "../hono-compute-provider/lib/abc/compute-provider/mod.ts",
     "@publicdomainrelay/firehose-watcher-abc": "../typescript-helpers/lib/firehose-watcher-abc/mod.ts"
-  },
-  "desktop": {
-    "app": {
-      "name": "macOS App Attest",
-      "identifier": "com.publicdomainrelay.macos-app-attest2"
-    },
-    "backend": "webview",
-    "output": {
-      "macos": "./dist/macOS-App-Attest.app"
-    },
-    "macos": {
-      "codesignIdentity": "Apple Development: John Andersen (C46CT949V3)"
-    }
   }
 }

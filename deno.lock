@@ -1708,6 +1708,31 @@
       "npm:@noble/hashes@^1.3.0",
       "npm:@peculiar/x509@^1.12.3"
     ],
+    "members": {
+      "hono-desktop": {
+        "dependencies": [
+          "jsr:@hono/hono@4",
+          "jsr:@publicdomainrelay/app-attest-abc@0",
+          "jsr:@publicdomainrelay/app-attest-none@0",
+          "jsr:@publicdomainrelay/atproto-oauth-abc@0",
+          "jsr:@publicdomainrelay/atproto-oauth-common@0",
+          "jsr:@publicdomainrelay/atproto-oauth-fetch@0",
+          "jsr:@publicdomainrelay/badge-blue-keys-abc@0",
+          "jsr:@publicdomainrelay/badge-blue-keys-atproto@0",
+          "jsr:@publicdomainrelay/badge-blue-keys-common@0",
+          "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-bidder-keys@0",
+          "jsr:@publicdomainrelay/serve@0"
+        ]
+      },
+      "lib/secret-store-win32": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/app-attest-abc@0",
+          "jsr:@publicdomainrelay/logger@0"
+        ]
+      }
+    },
     "links": {
       "jsr:@publicdomainrelay/atproto-attestation-port@0.0.0": {
         "dependencies": [

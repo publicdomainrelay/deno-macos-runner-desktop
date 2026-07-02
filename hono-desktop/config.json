@@ -1,0 +1,5 @@
+{
+  "port": 8080,
+  "hostname": "0.0.0.0",
+  "skip-market": true
+}

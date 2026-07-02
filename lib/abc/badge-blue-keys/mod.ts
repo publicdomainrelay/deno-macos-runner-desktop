@@ -4,7 +4,7 @@
 import type { BadgeBlueKeysSession } from "@publicdomainrelay/badge-blue-keys-common";
 
 export interface AssociationService {
-  /** Derive the deterministic record rkey from a DeviceCheck attestation. */
+  /** Derive deterministic record rkey from did + keyId. */
   computeRkey(
     persistentKeyId: string,
     did: string,

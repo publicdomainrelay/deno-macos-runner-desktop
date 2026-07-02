@@ -1,0 +1,34 @@
+# Test container for gnome-keyring + DBus flow validation
+# Build binary first on host:
+#   deno compile --allow-net --allow-read --allow-write --allow-env --allow-run \
+#     --target aarch64-unknown-linux-gnu --output hono-desktop/hono-desktop-bin hono-desktop/mod.ts
+# Build + run:
+#   container build -f Dockerfile.gnome-test -t pdr-desktop-gnome .
+#   container run --rm -p 8080:8080 pdr-desktop-gnome
+
+FROM debian:bookworm-slim
+
+# Install gnome-keyring, secret-tool, DBus
+RUN apt-get update && apt-get install -y \
+    curl ca-certificates \
+    gnome-keyring libsecret-tools dbus dbus-x11 \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY hono-desktop/hono-desktop-bin /usr/local/bin/hono-desktop
+
+RUN mkdir -p /data
+ENV STORAGE_DIR=/data
+ENV STATE_PATH=/data/compute-provider-state.json
+ENV HOSTNAME=0.0.0.0
+ENV PORT=8080
+ENV SKIP_MARKET=true
+
+EXPOSE 8080
+
+# Start DBus session, unlock gnome-keyring, then run hono-desktop
+# gnome-keyring-daemon needs DBus session bus + a dummy password for automated unlock
+ENTRYPOINT ["/bin/bash", "-c", "\
+  export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --fork --print-address) && \
+  echo 'test' | gnome-keyring-daemon --unlock --components=secrets && \
+  exec /usr/local/bin/hono-desktop \
+"]

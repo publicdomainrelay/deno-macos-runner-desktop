@@ -111,7 +111,7 @@ export function createAppAttestService(opts: AppAttestDarwinOpts): AppAttestServ
       }
     },
 
-    generateKey(): string {
+    async generateKey(): Promise<string> {
       ensureBridge(bridgePath, logger);
       checkBridge();
       const keyPtr = bridge!.symbols.dc_generate_key();
@@ -126,7 +126,7 @@ export function createAppAttestService(opts: AppAttestDarwinOpts): AppAttestServ
       return keyId;
     },
 
-    attestKey(keyId: string, challengeHash: Uint8Array): Uint8Array {
+    async attestKey(keyId: string, challengeHash: Uint8Array): Promise<Uint8Array> {
       ensureBridge(bridgePath, logger);
       checkBridge();
       const keyCStr = encodeCStr(keyId);
@@ -150,7 +150,7 @@ export function createAppAttestService(opts: AppAttestDarwinOpts): AppAttestServ
       return buf;
     },
 
-    generateAssertion(keyId: string, clientDataHash: Uint8Array): Uint8Array {
+    async generateAssertion(keyId: string, clientDataHash: Uint8Array): Promise<Uint8Array> {
       ensureBridge(bridgePath, logger);
       checkBridge();
       const keyCStr = encodeCStr(keyId);
