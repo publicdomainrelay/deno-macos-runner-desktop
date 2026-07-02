@@ -33,7 +33,6 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 // Market bidder — dynamic imports in startBidder() avoid deno desktop
 // module graph analyzer walking @atproto/* npm deps.
 import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
-import { createDpopProof } from "@publicdomainrelay/atproto-oauth-fetch";
 import type { RelayRef } from "@publicdomainrelay/serve";
 // Static import ensures deno compile bundles this file. Content extracted
 // at runtime to cache dir so copySystemctlShim finds it without fetch().
@@ -215,9 +214,7 @@ async function startBidder(): Promise<void> {
       { did: oauthSession.did, pds: oauthSession.pds, accessJwt: oauthSession.accessJwt,
         dpopKeyPair: oauthSession.dpopKeyPair, dpopPublicJwk: oauthSession.dpopPublicJwk },
       keypair,
-      { createDpopProof,
-        serverNonce: oauthServerNonce,
-        refreshSession: async () => {
+      { refreshSession: async () => {
           const r = await oauth.refreshSession(oauthSession!);
           oauthSession = r; keychain.saveSession(r).catch(() => {});
           return { did: r.did, pds: r.pds, accessJwt: r.accessJwt,
@@ -414,7 +411,7 @@ urlScheme.register();
         { did: oauthSession.did, pds: oauthSession.pds, accessJwt: oauthSession.accessJwt,
           dpopKeyPair: oauthSession.dpopKeyPair, dpopPublicJwk: oauthSession.dpopPublicJwk },
         keypair,
-        { createDpopProof, serverNonce: oauthServerNonce, refreshSession: async () => oauthSession! },
+        { refreshSession: async () => oauthSession! },
       );
       const saAgent = agent as { getServiceAuth?: (aud: string, lxm?: string) => Promise<string> };
       if (saAgent.getServiceAuth) {

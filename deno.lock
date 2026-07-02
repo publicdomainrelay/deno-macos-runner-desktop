@@ -5,19 +5,28 @@
     "jsr:@cliffy/flags@1.2.1": "1.2.1",
     "jsr:@cliffy/internal@1.2.1": "1.2.1",
     "jsr:@cliffy/table@1.2.1": "1.2.1",
+    "jsr:@hono/hono@*": "4.12.24",
     "jsr:@hono/hono@4": "4.12.24",
     "jsr:@std/assert@1": "1.0.19",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/fmt@^1.0.10": "1.0.10",
     "jsr:@std/internal@^1.0.12": "1.0.14",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@1": "1.1.6",
+    "jsr:@std/semver@^1.0.8": "1.0.8",
     "jsr:@std/text@^1.0.19": "1.0.19",
     "npm:@atiproto/key-resolver@0.1": "0.1.0",
+    "npm:@atproto/api@*": "0.20.23",
     "npm:@atproto/api@~0.20.8": "0.20.23",
     "npm:@atproto/common-web@0.5": "0.5.2",
     "npm:@atproto/common@0.5": "0.5.16",
+    "npm:@atproto/crypto@*": "0.5.2",
     "npm:@atproto/crypto@0.5": "0.5.2",
     "npm:@atproto/crypto@~0.4.4": "0.4.5",
+    "npm:@atproto/identity@*": "0.5.2",
     "npm:@atproto/identity@0.5": "0.5.2",
     "npm:@atproto/lex@~0.1.3": "0.1.5",
+    "npm:@atproto/oauth-client@~0.7.5": "0.7.5",
     "npm:@atproto/xrpc-server@~0.11.1": "0.11.4",
     "npm:@atproto/xrpc@0.7": "0.7.7",
     "npm:@ipld/dag-cbor@9": "9.2.7",
@@ -30,6 +39,7 @@
     "npm:@resvg/resvg-js@*": "2.6.2",
     "npm:@resvg/resvg-wasm@*": "2.6.2",
     "npm:hono@4": "4.12.27",
+    "npm:hono@^4.12.23": "4.12.27",
     "npm:jose@5": "5.10.0",
     "npm:multiformats@13": "13.4.2",
     "npm:multiformats@^13.3.0": "13.4.2",
@@ -45,6 +55,7 @@
         "jsr:@cliffy/internal",
         "jsr:@cliffy/table",
         "jsr:@std/fmt",
+        "jsr:@std/semver",
         "jsr:@std/text"
       ]
     },
@@ -70,7 +81,7 @@
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.12"
       ]
     },
     "@std/fmt@1.0.10": {
@@ -78,6 +89,15 @@
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/path@1.1.6": {
+      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14"
+      ]
+    },
+    "@std/semver@1.0.8": {
+      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
     },
     "@std/text@1.0.19": {
       "integrity": "003a0e032d360e8c3a4e0410fb792c77a66bd6553fee9d60c6ec1bce30d29223"
@@ -116,6 +136,22 @@
       "integrity": "sha512-NWNQ+MLNEqXpxsfM9mG14eVo0n5z8oWU7yjz/kCROAw5HG+i8a44tQtic90qXw3rBVxFBrrgE4kMftA7jeOiCw==",
       "dependencies": [
         "@atproto-labs/pipe"
+      ]
+    },
+    "@atproto-labs/handle-resolver@0.4.3": {
+      "integrity": "sha512-GHaqceAzOs4p/XP77yaPIbZlrdD0PPDCw4DS4RyxvvMZFbvnjPsHQOigCRYGdxsf3WgyqSxBlIzTl0jO7j9Q+A==",
+      "dependencies": [
+        "@atproto-labs/simple-store@0.4.2",
+        "@atproto-labs/simple-store-memory@0.2.2",
+        "@atproto/did",
+        "zod"
+      ]
+    },
+    "@atproto-labs/identity-resolver@0.4.2": {
+      "integrity": "sha512-OKrTzb/2DWu7w4wahutEG4Y5fL5UQlosZ1y+dldYsYwEk+PnY3CHX9RCuE36nREQ2dICNWAdaKM3z6b0ZlB2QA==",
+      "dependencies": [
+        "@atproto-labs/did-resolver",
+        "@atproto-labs/handle-resolver"
       ]
     },
     "@atproto-labs/pipe@0.2.2": {
@@ -219,6 +255,13 @@
       "dependencies": [
         "@atproto/common-web@0.5.2",
         "@atproto/crypto@0.5.2"
+      ]
+    },
+    "@atproto/jwk@0.7.2": {
+      "integrity": "sha512-CnLjMXgbUEstC2gsSE0Nc4hEgA7oS7HJAFRnI4gBNzAckHJqLqvAqj2whhM9VlcnY/dUZSnAskZ11pgBU/go+w==",
+      "dependencies": [
+        "multiformats@13.4.2",
+        "zod"
       ]
     },
     "@atproto/lex-builder@0.1.4": {
@@ -361,6 +404,32 @@
         "@atproto/common-web@0.5.2",
         "@atproto/syntax@0.6.3",
         "multiformats@13.4.2",
+        "zod"
+      ]
+    },
+    "@atproto/oauth-client@0.7.5": {
+      "integrity": "sha512-B9VLopSCxu8z05+3DwMmhlMR+jIh49FQ/jJN8ZUCFSInRpX/6TcnnwhJWQoYxMaQ0orcul9dCucxTZhtp/W/uA==",
+      "dependencies": [
+        "@atproto-labs/did-resolver",
+        "@atproto-labs/fetch",
+        "@atproto-labs/handle-resolver",
+        "@atproto-labs/identity-resolver",
+        "@atproto-labs/simple-store@0.4.2",
+        "@atproto-labs/simple-store-memory@0.2.2",
+        "@atproto/did",
+        "@atproto/jwk",
+        "@atproto/oauth-types",
+        "@atproto/xrpc@0.8.2",
+        "core-js",
+        "multiformats@13.4.2",
+        "zod"
+      ]
+    },
+    "@atproto/oauth-types@0.7.3": {
+      "integrity": "sha512-ndtwZQDawNLG6UBeJ31oXbtcITFbR+h48vAvyLs1FyZcXX6tEHniuG2Sd+4sUsrzHAMS/PGAEjUpTijObQIXzw==",
+      "dependencies": [
+        "@atproto/did",
+        "@atproto/jwk",
         "zod"
       ]
     },
@@ -1634,6 +1703,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@hono/hono@4",
+      "npm:@atproto/oauth-client@~0.7.5",
       "npm:@noble/curves@^1.3.0",
       "npm:@noble/hashes@^1.3.0",
       "npm:@peculiar/x509@^1.12.3"
