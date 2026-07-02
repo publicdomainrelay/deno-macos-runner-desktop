@@ -18,7 +18,7 @@ export interface OAuthCallbackResult {
 export interface OAuthFlow {
   /** Begin authorization: resolve handle→DID→PDS→auth server, push PAR,
    *  open system browser. Returns the DID being authorized. */
-  startAuth(handle: string): Promise<{ did: string; authServer: string }>;
+  startAuth(handle: string): Promise<{ did: string; authServer: string; authUrl: string; parState: unknown }>;
 
   /** Exchange authorization code for tokens. Called by both the HTTP
    *  callback handler and the URL scheme poller (single implementation). */

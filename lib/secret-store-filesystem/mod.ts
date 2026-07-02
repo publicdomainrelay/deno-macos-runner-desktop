@@ -14,6 +14,11 @@ export interface FilesystemSecretStoreOpts {
   logger?: StructuredLoggerInterface;
 }
 
+/** HOME-relative default for any CLI path option left unset. */
+export function defaultHomeDir(): string {
+  return Deno.env.get("HOME") ?? "/tmp";
+}
+
 // ===========================================================================
 // Core store — synchronously flushed JSON map
 // ===========================================================================
@@ -57,7 +62,7 @@ class FileStore {
 // ===========================================================================
 
 export function createFilesystemKeychainStore(opts: FilesystemSecretStoreOpts = {}): KeychainStore {
-  const storageDir = opts.storageDir ?? `${Deno.env.get("HOME") ?? "/tmp"}/.pdr-keys`;
+  const storageDir = opts.storageDir ?? `${defaultHomeDir()}/.pdr-keys`;
   const logger = opts.logger;
   const store = new FileStore(storageDir, logger);
 

@@ -1,4 +1,3 @@
-// @ts-nocheck — Deno desktop runtime APIs not in compile-time types
 // Portable Compute Provider — Linux container / headless server
 //
 // Thin CLI entrypoint composing ABC-layered packages:
@@ -14,7 +13,7 @@ import { Hono } from "@hono/hono";
 import {
   createAppAttestService, createRichKeychainStore,
 } from "@publicdomainrelay/app-attest-none";
-import { createFilesystemKeychainStore } from "@publicdomainrelay/secret-store-filesystem";
+import { createFilesystemKeychainStore, defaultHomeDir } from "@publicdomainrelay/secret-store-filesystem";
 import { createGnomeKeychainStore } from "@publicdomainrelay/secret-store-gnome";
 import { createWin32KeychainStore } from "@publicdomainrelay/secret-store-win32";
 import { buildStandardChain } from "@publicdomainrelay/secret-store-chain";
@@ -36,6 +35,7 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 // Market bidder — dynamic imports in startBidder()
 import { loadOrCreateMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
+import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import type { RelayRef } from "@publicdomainrelay/serve";
 import systemctlShimSource from "../../hono-compute-provider/lib/compute-provider-local/systemctl-shim.ts" with { type: "text" };
 
@@ -82,6 +82,8 @@ const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
 const OFFERING_REFRESH_MS = ((options.offeringRefreshSec as number) ?? 300) * 1000;
 const SKIP_MARKET = (options.skipMarket as boolean) ?? false;
+const HEADLESS_BIDDER = (options.startBidder as boolean) ?? false;
+const PRIVATE_KEY_HEX = options.privateKeyHex as string | undefined;
 const HOSTNAME = (options.hostname as string) || "0.0.0.0";
 const PORT = (options.port as number) || 0;
 
@@ -139,7 +141,7 @@ const secretStore = buildStandardChain({
 const attest: AppAttestService = createAppAttestService({ keychain: secretStore, logger });
 const keychain = createRichKeychainStore(secretStore, { logger });
 
-const oauth: OAuthFlow & { startAuth: (handle: string) => Promise<{ did: string; authServer: string; authUrl: string; parState: ParState }> } = createOAuthFlow({
+const oauth: OAuthFlow = createOAuthFlow({
   clientId: OAUTH_CLIENT_ID,
   redirectUri: OAUTH_REDIRECT_URI,
   scope: OAUTH_SCOPE,
@@ -183,8 +185,7 @@ const DEFAULT_PROVIDER_STATE: ProviderState = {
 };
 
 function resolveStatePath(): string {
-  const home = Deno.env.get("HOME") ?? "";
-  return (options.statePath as string) || (home ? `${home}/.compute-provider-state.json` : `${Deno.cwd()}/.compute-provider-state.json`);
+  return (options.statePath as string) || `${defaultHomeDir()}/.compute-provider-state.json`;
 }
 
 const STATE_PATH = resolveStatePath();
@@ -209,6 +210,173 @@ function openUrl(url: string): void {
   }).catch(() => {
     log.info("navigate to this URL to continue", { url });
   });
+}
+
+// ===========================================================================
+// Headless bidder — start without OAuth, using local PDS + direct keypair
+// ===========================================================================
+
+async function startBidderHeadless(): Promise<void> {
+  // Local-dev fetch patching: *.localhost DNS doesn't resolve + plc.directory
+  // → local PLC. Same pattern as hono-bidder and request-vm-ssh.
+  const isLocalDev = DISPATCHER_HOST.includes("localhost") || DISPATCHER_HOST.startsWith("127.");
+  const _plcHost = (() => { try { return new URL(PLC_DIRECTORY_URL).hostname; } catch { return PLC_DIRECTORY_URL; } })();
+  const isLocalPlc = _plcHost === "localhost" || _plcHost.startsWith("127.") || _plcHost === "0.0.0.0";
+  if (isLocalDev || isLocalPlc) {
+    const patchPort = DISPATCHER_HOST.includes(":") ? DISPATCHER_HOST.split(":").pop()! : "80";
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
+      if (m && m[1].endsWith(".localhost")) {
+        let host = m[1];
+        if (!host.includes(":")) host = `${host}:${patchPort}`;
+        url = `http://${host}${m[2] ?? ""}`;
+        return realFetch(url, init);
+      }
+      if (isLocalPlc && url.startsWith("https://plc.directory/")) {
+        url = PLC_DIRECTORY_URL + url.slice("https://plc.directory".length);
+        return realFetch(url, init);
+      }
+      return realFetch(input as string | URL | Request, init);
+    }) as typeof fetch;
+  }
+
+  const [
+    { Secp256k1Keypair },
+    { createBadgeBlueSigner },
+    { createPlcDirectoryClient },
+    { createATProto, createLocalPDSAgent },
+    { createXrpcRelay },
+    { createMarketBidder },
+    { createComputeProviderHooks },
+    { createLocalComputeProvider },
+    { createOidcProvisioningEnricher },
+    { createRbacProvisioner },
+  ] = await Promise.all([
+    import("@atproto/crypto"),
+    import("@publicdomainrelay/market-atproto"),
+    import("../../atproto-market/lib/did-plc/mod.ts"),
+    import("@publicdomainrelay/atproto-helpers"),
+    import("../../atproto-market/lib/xrpc-relay/mod.ts"),
+    import("../../atproto-market/lib/market-bidder/mod.ts"),
+    import("../../atproto-market/lib/market-bidder-compute/mod.ts"),
+    import("../../hono-compute-provider/lib/compute-provider-local/mod.ts"),
+    import("../../hono-compute-provider/lib/oidc-issuer-hono/mod.ts"),
+    import("../../hono-compute-provider/lib/rbac-atproto/mod.ts"),
+  ]);
+
+  const keypair = await Secp256k1Keypair.create({ exportable: true });
+  const did = keypair.did();
+
+  const pdsAgent = await createLocalPDSAgent({
+    logger: createStructuredLogger("headless-pds"),
+    keypair,
+    serve: createServe({ logger }),
+    plcDirectoryUrl: PLC_DIRECTORY_URL,
+    dispatcherHost: DISPATCHER_HOST,
+  });
+  await pdsAgent.beginServe();
+
+  const _privHexBytes = await keypair.export();
+  const privHex = Array.from(_privHexBytes).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+  const badgeBlueSigner = await createBadgeBlueSigner({ privateKeyHex: privHex });
+  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: PLC_DIRECTORY_URL });
+
+  const atproto = await createATProto({
+    logger,
+    badgeBlueSigner,
+    plcDirectory: plcClient,
+    agent: pdsAgent,
+  });
+
+  bidderRelay = createXrpcRelay({
+    logger, dispatcherHost: DISPATCHER_HOST,
+    signer: atproto.signer,
+    keypair: { did: () => did, sign: keypair.sign.bind(keypair) },
+  });
+
+  bidderServe = createServe({
+    logger,
+    tcp: { addr: "127.0.0.1", port: PORT },
+    relays: [bidderRelay],
+  });
+
+  // Container image pre-build
+  if (providerState.containersEnabled) {
+    try {
+      const cacheDir = `${defaultHomeDir()}/.cache/pdr-compute`;
+      await Deno.mkdir(cacheDir, { recursive: true });
+      await Deno.writeTextFile(`${cacheDir}/systemctl-shim-ubuntu.ts`, systemctlShimSource);
+      const { createContainerBackend } = await import("../../hono-compute-provider/lib/container-backend-container/mod.ts");
+      const backend = createContainerBackend();
+      const imgTag = "container-runner-ubuntu:latest";
+      if (!(await backend.imageExists(imgTag))) {
+        const { buildContainerImage } = await import("../../hono-compute-provider/lib/compute-provider-local/mod.ts");
+        await buildContainerImage(backend, "ubuntu");
+        log.info("headless: container image built");
+      }
+    } catch (e) {
+      log.warn("headless: container init skipped", { error: String(e) });
+    }
+  }
+
+  const localComputeProvider = createLocalComputeProvider({
+    logger,
+    atproto: atproto as never,
+    serve: bidderServe,
+    getIssuerUrl: () => {
+      const ref = bidderRelay?.proxyRef ?? "";
+      return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
+    },
+    containerMode: "container",
+    oidcProvisioner: createOidcProvisioningEnricher(() => {
+      const ref = bidderRelay?.proxyRef ?? "";
+      return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
+    }),
+    rbacProvisioner: createRbacProvisioner(),
+  });
+
+  const providers: MarketBidderProviderRef[] = [
+    createComputeProviderHooks({ provider: localComputeProvider }),
+  ];
+
+  marketBidder = await createMarketBidder({
+    logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
+    skipServeBegin: true,
+    offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
+  });
+  await marketBidder.beginServe();
+  await bidderServe.beginServe();
+
+  // Offering record
+  try {
+    const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
+    const proxyRef = bidderRelay?.proxyRef ?? "";
+    const endpointUrl = proxyRef.startsWith("did:web:")
+      ? "https://" + proxyRef.slice("did:web:".length)
+      : `${atproto.did}#pdr_temp_market`;
+    await atproto.createRecord(OFFERING_NSID, {
+      $type: OFFERING_NSID,
+      endpointUrl,
+      appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
+      createdAt: new Date().toISOString(),
+      refreshedAt: new Date().toISOString(),
+    });
+    log.info("headless: offering created", { endpointUrl });
+  } catch (e) {
+    log.warn("headless: offering create failed", { error: String(e) });
+  }
+
+  bidderStarted = true;
+
+  // Machine-readable line for test harnesses to parse
+  console.log(JSON.stringify({
+    event: "bidder_ready",
+    did,
+    proxyRef: bidderRelay?.proxyRef,
+    servePort: bidderServe.tcpPort,
+  }));
 }
 
 // ===========================================================================
@@ -266,9 +434,9 @@ async function startBidder(): Promise<void> {
       did: { async resolve(did: string) { try {
         if (did.startsWith("did:web:")) { const h = did.slice("did:web:".length);
           const r = await fetch(`https://${h}/.well-known/did.json`);
-          return r.ok ? r.json() as Record<string, unknown> : null; }
+          return r.ok ? await r.json() as Record<string, unknown> : null; }
         const r = await fetch(`${PLC_DIRECTORY_URL}/${encodeURIComponent(did)}`);
-        if (!r.ok) return null; return r.json() as Record<string, unknown>;
+        if (!r.ok) return null; return await r.json() as Record<string, unknown>;
       } catch { return null; } } },
     };
     const atproto = await createDesktopATProto(logger, oauthAgent, badgeBlueSigner, idResolver as never, plcClient);
@@ -292,8 +460,7 @@ async function startBidder(): Promise<void> {
         const status = await p.status;
         if (status.success) {
           log.info("bidder: container system start ok");
-          const home = Deno.env.get("HOME") ?? "/tmp";
-          const cacheDir = `${home}/.cache/pdr-compute`;
+          const cacheDir = `${defaultHomeDir()}/.cache/pdr-compute`;
           await Deno.mkdir(cacheDir, { recursive: true });
           await Deno.writeTextFile(`${cacheDir}/systemctl-shim-ubuntu.ts`, systemctlShimSource);
           const { createContainerBackend } = await import("../../hono-compute-provider/lib/container-backend-container/mod.ts");
@@ -326,11 +493,9 @@ async function startBidder(): Promise<void> {
       rbacProvisioner: createRbacProvisioner(),
     });
 
-    const providers: Array<{
-      serviceId: string; appliesTo: string[];
-      setup?(): Promise<void>; teardown?(): Promise<void>;
-      buildCallbacks(d: Record<string, unknown>): Record<string, unknown>;
-    }> = [createComputeProviderHooks({ provider: localComputeProvider }) as never];
+    const providers: MarketBidderProviderRef[] = [
+      createComputeProviderHooks({ provider: localComputeProvider }),
+    ];
 
     marketBidder = await createMarketBidder({
       logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
@@ -579,7 +744,7 @@ app.post("/api/atproto/start-oauth", async (c) => {
     if (!handle) return json({ error: "handle required" }, 400);
     oauthInFlight = true; oauthError = null;
     const result = await oauth.startAuth(handle);
-    parState = result.parState;
+    parState = result.parState as ParState;
     openUrl(result.authUrl);
     return json({ ok: true, did: result.did });
   } catch (e) {
@@ -633,7 +798,9 @@ app.post("/api/state", async (c) => {
   const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope"];
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
-  for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
+  for (const k of allowed) {
+    if (k in body) providerState[k] = body[k] as never;
+  }
 
   if (providerState.dispatchingEnabled && !oauthSession) {
     providerState.dispatchingEnabled = false;
@@ -668,6 +835,22 @@ app.post("/api/atproto/create-key-record", async (c) => {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
+
+// ===========================================================================
+// Headless bidder entrypoint — no tray, no OAuth, no web UI
+// ===========================================================================
+
+if (HEADLESS_BIDDER) {
+  function headlessShutdown() {
+    stopBidder();
+    Deno.exit();
+  }
+  Deno.addSignalListener("SIGINT", headlessShutdown);
+  Deno.addSignalListener("SIGTERM", headlessShutdown);
+  await startBidderHeadless();
+  // idle until killed
+  await new Promise<void>(() => {});
+}
 
 // ===========================================================================
 // Serve

@@ -21,6 +21,7 @@
   "nodeModulesDir": "auto",
   "imports": {
     "@atproto/oauth-client": "npm:@atproto/oauth-client@^0.7.5",
+    "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
     "@peculiar/x509": "npm:@peculiar/x509@^1.12.3",
     "@hono/hono": "jsr:@hono/hono@^4",
     "@noble/curves": "npm:@noble/curves@^1.3.0",

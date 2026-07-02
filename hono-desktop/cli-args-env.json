@@ -64,6 +64,15 @@
       "type": "boolean",
       "description": "Skip market bidder initialization",
       "env": "SKIP_MARKET"
+    },
+    "start-bidder": {
+      "type": "boolean",
+      "description": "Start market bidder immediately (headless, no OAuth)"
+    },
+    "private-key-hex": {
+      "type": "string",
+      "description": "Secp256k1 private key hex for market bidder identity (headless mode)",
+      "env": "PRIVATE_KEY_HEX"
     }
   }
 }
