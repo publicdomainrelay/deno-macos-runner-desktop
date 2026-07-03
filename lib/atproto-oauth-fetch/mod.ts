@@ -191,7 +191,7 @@ async function pushPar(
 
   console.error(JSON.stringify({
     component: "oauth-fetch", event: "par_request",
-    parEndpoint, params: Object.fromEntries(parBody.entries()),
+    parEndpoint, params: (() => { const { state: _redacted, ...safeParams } = Object.fromEntries(parBody.entries()); return safeParams; })(),
   }));
   let parDpop = await createDpopProof(dpop.keyPair, dpop.publicJwk, "POST", parEndpoint);
   let parRes = await fetch(parEndpoint, {
@@ -299,18 +299,20 @@ async function fetchSessionInfo(
   };
 
   let res = await doGetSession(serverNonce);
+  let sessionErrBody: string | null = null;
   if (res.status === 400 || res.status === 401) {
-    const errBody = await res.text();
-    if (errBody.includes("use_dpop_nonce")) {
+    sessionErrBody = await res.text();
+    if (sessionErrBody.includes("use_dpop_nonce")) {
       const newNonce = res.headers.get("DPoP-Nonce");
       if (newNonce) {
         res = await doGetSession(newNonce);
+        sessionErrBody = null;
       }
     }
   }
 
   const newNonce = res.headers.get("DPoP-Nonce") || null;
-  if (!res.ok) throw new Error(`getSession: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`getSession: ${res.status} ${sessionErrBody ?? await res.text()}`);
   const data = await res.json();
   return { handle: data.handle, did: data.did, oauthServerNonce: newNonce || serverNonce };
 }
@@ -341,15 +343,17 @@ async function refreshSession(
   };
 
   let res = await doRefresh(serverNonce);
+  let refreshErrBody: string | null = null;
   if (res.status === 400) {
-    const errBody = await res.text();
-    if (errBody.includes("use_dpop_nonce")) {
+    refreshErrBody = await res.text();
+    if (refreshErrBody.includes("use_dpop_nonce")) {
       const newNonce = res.headers.get("DPoP-Nonce");
       if (!newNonce) throw new Error("Token refresh: server requested nonce but none provided");
       res = await doRefresh(newNonce);
+      refreshErrBody = null;
     }
   }
-  if (!res.ok) throw new Error(`Token refresh: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Token refresh: ${res.status} ${refreshErrBody ?? await res.text()}`);
 
   const newNonce = res.headers.get("DPoP-Nonce") || null;
   const data = await res.json();

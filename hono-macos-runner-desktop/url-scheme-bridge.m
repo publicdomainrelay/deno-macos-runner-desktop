@@ -26,8 +26,8 @@ static char* url_pending = NULL;
 static URLSchemeDelegate* url_delegate = nil;
 
 void url_register_handler(void) {
+  url_delegate = [[URLSchemeDelegate alloc] init];
   dispatch_async(dispatch_get_main_queue(), ^{
-    url_delegate = [[URLSchemeDelegate alloc] init];
     [[NSAppleEventManager sharedAppleEventManager]
         setEventHandler:url_delegate
         andSelector:@selector(handleGetURLEvent:withReplyEvent:)

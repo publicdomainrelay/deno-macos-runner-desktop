@@ -889,15 +889,19 @@ try {
     if (!ptr) return;
     const urlStr = new Deno.UnsafePointerView(ptr as NonNullable<typeof ptr>).getCString();
     urlBridge.symbols.url_bridge_free_string(ptr);
-    log.info("url scheme callback received", { url: urlStr });
-    const u = new URL(urlStr);
-    const code = u.searchParams.get("code");
-    const state = u.searchParams.get("state");
-    const iss = u.searchParams.get("iss");
-    if (!code || !state || !iss) return;
-    processOAuthCallback(code, state, iss).then((result) => {
-      if (!result.ok) log.error("oauth: url scheme callback failed", { error: result.error });
-    });
+    try {
+      log.info("url scheme callback received", { url: urlStr });
+      const u = new URL(urlStr);
+      const code = u.searchParams.get("code");
+      const state = u.searchParams.get("state");
+      const iss = u.searchParams.get("iss");
+      if (!code || !state || !iss) return;
+      processOAuthCallback(code, state, iss).then((result) => {
+        if (!result.ok) log.error("oauth: url scheme callback failed", { error: result.error });
+      });
+    } catch (e) {
+      log.error("url scheme callback parse error", { error: String(e) });
+    }
   }, 500);
   Deno.unrefTimer?.(poll);
   log.info("url scheme bridge loaded");
