@@ -303,6 +303,7 @@ async function startBidder(): Promise<void> {
       logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
+      acceptScope: providerState.acceptScope ?? undefined,
     });
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
     // isn't built yet (no requests have arrived on this serve).
@@ -329,6 +330,27 @@ async function startBidder(): Promise<void> {
       log.info("bidder: created offering with appliesTo", { endpointUrl });
     } catch (e) {
       log.warn("bidder: offering create failed", { error: String(e) });
+    }
+
+    // Create bidderAssociation reverse pointer on the bidder's repo.
+    // Bridges did:key → operator DID for vouch graph traversal.
+    if (associationRecordUri) {
+      try {
+        const BIDDER_ASSOCIATION_NSID = "com.publicdomainrelay.temp.market.bidderAssociation";
+        await atproto.createRecord(BIDDER_ASSOCIATION_NSID, {
+          $type: BIDDER_ASSOCIATION_NSID,
+          operatorDid: oauthSession!.did,
+          associationProof: {
+            $type: "com.atproto.repo.strongRef",
+            uri: associationRecordUri,
+            cid: "",
+          },
+          createdAt: new Date().toISOString(),
+        });
+        log.info("bidder: bidderAssociation created", { operatorDid: oauthSession!.did });
+      } catch (e) {
+        log.warn("bidder: bidderAssociation create failed", { error: String(e) });
+      }
     }
 
     bidderStarted = true;
@@ -616,6 +638,7 @@ app.post("/api/state", async (c) => {
   const oldDispatch = providerState.dispatchingEnabled;
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
+  const oldAcceptScope = providerState.acceptScope;
   for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
 
   if (providerState.dispatchingEnabled && !oauthSession) {
@@ -627,7 +650,8 @@ app.post("/api/state", async (c) => {
 
   const needsRestart = bidderStarted && (
     oldWorkers !== providerState.workersEnabled ||
-    oldContainers !== providerState.containersEnabled
+    oldContainers !== providerState.containersEnabled ||
+    oldAcceptScope !== providerState.acceptScope
   );
   if (needsRestart) stopBidder();
   if (providerState.dispatchingEnabled && !bidderStarted) {

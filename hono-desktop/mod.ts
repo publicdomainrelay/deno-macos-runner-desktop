@@ -345,6 +345,7 @@ async function startBidderHeadless(): Promise<void> {
     logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
     skipServeBegin: true,
     offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
+    acceptScope: providerState.acceptScope ?? undefined,
   });
   await marketBidder.beginServe();
   await bidderServe.beginServe();
@@ -501,6 +502,7 @@ async function startBidder(): Promise<void> {
       logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
+      acceptScope: providerState.acceptScope ?? undefined,
     });
     await marketBidder.beginServe();
     await bidderServe.beginServe();
@@ -521,6 +523,26 @@ async function startBidder(): Promise<void> {
       log.info("bidder: created offering with appliesTo", { endpointUrl });
     } catch (e) {
       log.warn("bidder: offering create failed", { error: String(e) });
+    }
+
+    // Create bidderAssociation reverse pointer for vouch graph traversal.
+    if (associationRecordUri && oauthSession) {
+      try {
+        const BIDDER_ASSOCIATION_NSID = "com.publicdomainrelay.temp.market.bidderAssociation";
+        await atproto.createRecord(BIDDER_ASSOCIATION_NSID, {
+          $type: BIDDER_ASSOCIATION_NSID,
+          operatorDid: oauthSession.did,
+          associationProof: {
+            $type: "com.atproto.repo.strongRef",
+            uri: associationRecordUri,
+            cid: "",
+          },
+          createdAt: new Date().toISOString(),
+        });
+        log.info("bidder: bidderAssociation created", { operatorDid: oauthSession.did });
+      } catch (e) {
+        log.warn("bidder: bidderAssociation create failed", { error: String(e) });
+      }
     }
 
     bidderStarted = true;
@@ -798,6 +820,7 @@ app.post("/api/state", async (c) => {
   const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope"];
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
+  const oldAcceptScope = providerState.acceptScope;
   for (const k of allowed) {
     if (k in body) providerState[k] = body[k] as never;
   }
@@ -811,7 +834,8 @@ app.post("/api/state", async (c) => {
 
   const needsRestart = bidderStarted && (
     oldWorkers !== providerState.workersEnabled ||
-    oldContainers !== providerState.containersEnabled
+    oldContainers !== providerState.containersEnabled ||
+    oldAcceptScope !== providerState.acceptScope
   );
   if (needsRestart) stopBidder();
   if (providerState.dispatchingEnabled && !bidderStarted) {
