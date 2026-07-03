@@ -40,22 +40,25 @@ export function createAssociationService(): AssociationService {
       session: BadgeBlueKeysSession,
       persistentKeyId: string,
       service = "*",
+      name?: string,
     ): Promise<string> {
       if (!session || !persistentKeyId) throw new Error("not ready");
       const { did, pds, accessJwt, dpopKeyPair, dpopPublicJwk } = session;
       const rkey = await this.computeRkey(persistentKeyId, did);
       const createEndpoint = `${pds}/xrpc/com.atproto.repo.createRecord`;
+      const record: Record<string, unknown> = {
+        $type: BADGE_BLUE_KEYS_NSID,
+        keyId: persistentKeyId,
+        challenge: did,
+        service,
+        createdAt: new Date().toISOString(),
+      };
+      if (name) record.name = name;
       const body = JSON.stringify({
         repo: did,
         collection: BADGE_BLUE_KEYS_NSID,
         rkey,
-        record: {
-          $type: BADGE_BLUE_KEYS_NSID,
-          keyId: persistentKeyId,
-          challenge: did,
-          service,
-          createdAt: new Date().toISOString(),
-        },
+        record,
       });
 
       const doCreate = async (nonce: string | null): Promise<Response> => {
@@ -92,6 +95,8 @@ export function createAssociationService(): AssociationService {
     async findOrCreateRecord(
       session: BadgeBlueKeysSession,
       persistentKeyId: string,
+      service?: string,
+      name?: string,
     ): Promise<string | null> {
       if (!session || !persistentKeyId) return null;
       const { did, pds, accessJwt, dpopKeyPair, dpopPublicJwk } = session;
@@ -123,7 +128,7 @@ export function createAssociationService(): AssociationService {
         }
         const errBody = await res.json().catch(() => ({}));
         if (res.status === 404 || errBody.error === "RecordNotFound") {
-          return this.createRecord(session, persistentKeyId);
+          return this.createRecord(session, persistentKeyId, service, name);
         }
         console.error("badge-blue-keys: getRecord failed", res.status, JSON.stringify(errBody));
         return null;

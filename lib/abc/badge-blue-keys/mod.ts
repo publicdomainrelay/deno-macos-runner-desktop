@@ -15,11 +15,14 @@ export interface AssociationService {
     session: BadgeBlueKeysSession,
     persistentKeyId: string,
     service?: string,
+    name?: string,
   ): Promise<string>;
 
   /** Find existing association record for this key, or create one. */
   findOrCreateRecord(
     session: BadgeBlueKeysSession,
     persistentKeyId: string,
+    service?: string,
+    name?: string,
   ): Promise<string | null>;
 }

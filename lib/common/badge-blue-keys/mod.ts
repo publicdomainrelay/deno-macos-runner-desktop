@@ -8,6 +8,7 @@ export const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 export interface BadgeBlueKeysRecord {
   $type: string;
   keyId: string;
+  name?: string;
   challenge: string; // DID the key is bound to
   service: string;
   createdAt: string;

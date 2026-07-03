@@ -57,6 +57,7 @@ const { options } = await new Command(
 
 const serviceName = (options.serviceName as string) ?? "hono-desktop";
 const logger = createStructuredLogger(serviceName);
+const BIDDER_HOSTNAME = Deno.hostname();
 
 const OAUTH_CLIENT_ID = (options.oauthClientId as string) || OAUTH_CLIENT_ID_DEFAULT;
 const OAUTH_REDIRECT_URI = (options.oauthRedirectUri as string) || OAUTH_REDIRECT_URI_DEFAULT;
@@ -608,7 +609,7 @@ async function initKeysAndSession(): Promise<void> {
     await oauth.validateSession(saved);
     oauthSession = saved;
     log.info("session restored and validated", { did: saved.did, handle: saved.handle });
-    assoc.findOrCreateRecord(toBadgeSession(saved), persistentKeyId!).then((uri) => {
+    assoc.findOrCreateRecord(toBadgeSession(saved), persistentKeyId!, "bidder_desktop", BIDDER_HOSTNAME).then((uri) => {
       associationRecordUri = uri;
     }).catch((e) => log.warn("findOrCreateRecord after restore failed", { error: String(e) }));
   } catch (e) {
@@ -617,7 +618,7 @@ async function initKeysAndSession(): Promise<void> {
       const refreshed = await oauth.refreshSession(saved);
       oauthSession = refreshed;
       await keychain.saveSession(refreshed);
-      assoc.findOrCreateRecord(toBadgeSession(refreshed), persistentKeyId!).then((uri) => {
+      assoc.findOrCreateRecord(toBadgeSession(refreshed), persistentKeyId!, "bidder_desktop", BIDDER_HOSTNAME).then((uri) => {
         associationRecordUri = uri;
       }).catch((e2) => log.warn("findOrCreateRecord after refresh failed", { error: String(e2) }));
     } catch (e2) {
@@ -766,7 +767,7 @@ async function handleOAuthCallback(code: string, state: string, iss: string): Pr
     if (providerState.dispatchingEnabled && !bidderStarted) {
       startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
     }
-    assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!).then((uri) => {
+    assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!, "bidder_desktop", BIDDER_HOSTNAME).then((uri) => {
       associationRecordUri = uri;
     }).catch((e) => log.warn("findOrCreateRecord after login failed", { error: String(e) }));
     return new Response(
@@ -876,10 +877,11 @@ app.post("/api/atproto/create-key-record", async (c) => {
   if (!oauthSession) return json({ error: "not authenticated" }, 401);
   try {
     const body = await c.req.json().catch(() => ({}));
-    const service = String(body.service ?? "*").trim();
-    const uri = await assoc.createRecord(toBadgeSession(oauthSession), persistentKeyId!, service);
+    const service = String(body.service ?? "bidder_desktop").trim();
+    const name = String(body.name ?? BIDDER_HOSTNAME).trim();
+    const uri = await assoc.createRecord(toBadgeSession(oauthSession), persistentKeyId!, service, name);
     associationRecordUri = uri;
-    return json({ ok: true, uri, keyId: persistentKeyId, service });
+    return json({ ok: true, uri, keyId: persistentKeyId, service, name });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
