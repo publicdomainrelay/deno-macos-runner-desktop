@@ -545,6 +545,7 @@ function renderContracts(data){
   var activeList=$('contractActiveList'),pastList=$('contractPastList'),empty=$('contractEmpty');
   var hasActive=active.length>0,hasPast=past.length>0;
   empty.style.display=(hasActive||hasPast)?'none':'';
+  if(!hasActive&&!hasPast)empty.textContent='No active contracts';
   activeList.style.display=contractSubview==='active'?'':'none';
   pastList.style.display=contractSubview==='past'&&hasPast?'':'none';
   activeList.innerHTML=active.map(function(c){return renderContractCard(c,false);}).join('');

@@ -13,6 +13,6 @@ export interface OAuthSession {
 
 // Default OAuth client metadata — overridden via cli-args-env.json options.
 export const OAUTH_CLIENT_ID_DEFAULT =
-  "https://attest--johnandersen777-bsky-social.fedproxy.com/oauth-client-metadata.json";
+  "https://tray.fedfork.com/oauth-client-metadata.json";
 export const OAUTH_REDIRECT_URI_DEFAULT =
-  "com.fedproxy.attest--johnandersen777-bsky-social:/callback";
+  "com.fedfork.tray:/callback";

@@ -76,6 +76,7 @@ const BIDDER_SCOPE_COLLECTIONS = [
   "com.publicdomainrelay.temp.market.event",
   "com.publicdomainrelay.temp.compute.config.wif.simple",
   "com.fedproxy.rbac",
+  "com.publicdomainrelay.temp.market.bidderAssociation",
 ];
 const OAUTH_SCOPE = `atproto ${
   BIDDER_SCOPE_COLLECTIONS.map((c) => `repo:${c}?action=create repo:${c}?action=update`).join(" ")
@@ -862,8 +863,9 @@ setupWindowsAndTray(SERVE_PORT);
 // Custom URL scheme callback bridge (deno desktop has no NSAppleEventManager
 // hook). OAUTH_REDIRECT_URI_DEFAULT is a custom scheme, not loopback — the
 // system browser hands the callback to this app via `open`, which macOS
-// only routes if CFBundleURLTypes is registered (see rebuild.sh) and this
-// native bridge is polled for the pending kAEGetURL event.
+// only routes if CFBundleURLTypes is registered (see rebuild.sh with
+// com.fedfork.tray scheme) and this native bridge is polled for the
+// pending kAEGetURL event.
 // ===========================================================================
 
 function resolveUrlBridgePath(): string {

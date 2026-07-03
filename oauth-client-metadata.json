@@ -1,0 +1,19 @@
+{
+  "client_id": "https://tray.fedfork.com/oauth-client-metadata.json",
+  "application_type": "native",
+  "dpop_bound_access_tokens": true,
+  "redirect_uris": [
+    "com.fedfork.tray:/callback"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "scope": "atproto repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=create repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=update repo:com.publicdomainrelay.temp.market.offering?action=create repo:com.publicdomainrelay.temp.market.offering?action=update repo:com.publicdomainrelay.temp.market.bid?action=create repo:com.publicdomainrelay.temp.market.bid?action=update repo:com.publicdomainrelay.temp.market.bids.free?action=create repo:com.publicdomainrelay.temp.market.bids.free?action=update repo:com.publicdomainrelay.temp.market.bids.x402?action=create repo:com.publicdomainrelay.temp.market.bids.x402?action=update repo:com.publicdomainrelay.temp.market.receipt?action=create repo:com.publicdomainrelay.temp.market.receipt?action=update repo:com.publicdomainrelay.temp.market.receipts.free?action=create repo:com.publicdomainrelay.temp.market.receipts.free?action=update repo:com.publicdomainrelay.temp.market.receipts.x402?action=create repo:com.publicdomainrelay.temp.market.receipts.x402?action=update repo:com.publicdomainrelay.temp.market.event?action=create repo:com.publicdomainrelay.temp.market.event?action=update repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=create repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=update repo:com.fedproxy.rbac?action=create repo:com.fedproxy.rbac?action=update repo:com.publicdomainrelay.temp.market.bidderAssociation?action=create repo:com.publicdomainrelay.temp.market.bidderAssociation?action=update repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create rpc:com.publicdomainrelay.temp.market.submitBid?aud=* rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
+  "token_endpoint_auth_method": "none",
+  "client_name": "Public Domain Relay — Tray",
+  "client_uri": "https://tray.fedfork.com"
+}

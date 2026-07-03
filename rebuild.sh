@@ -38,7 +38,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
   # Register OAuth callback custom URL scheme (deno desktop has no hook for this).
   INFO_PLIST="$APP/Contents/Info.plist"
-  URL_SCHEME="com.fedproxy.attest--johnandersen777-bsky-social"
+  URL_SCHEME="com.fedfork.tray"
   /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$INFO_PLIST" 2>/dev/null || true
   /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$INFO_PLIST"

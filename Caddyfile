@@ -1,0 +1,6 @@
+tray.fedfork.com {
+	root * /var/www/tray.fedfork.com
+	file_server
+	header Content-Type application/json
+	header Access-Control-Allow-Origin *
+}

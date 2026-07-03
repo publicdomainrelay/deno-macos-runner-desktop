@@ -72,6 +72,7 @@ const BIDDER_SCOPE_COLLECTIONS = [
   "com.publicdomainrelay.temp.market.event",
   "com.publicdomainrelay.temp.compute.config.wif.simple",
   "com.fedproxy.rbac",
+  "com.publicdomainrelay.temp.market.bidderAssociation",
 ];
 const OAUTH_SCOPE = `atproto ${
   BIDDER_SCOPE_COLLECTIONS.map((c) => `repo:${c}?action=create repo:${c}?action=update`).join(" ")

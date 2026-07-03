@@ -22,7 +22,7 @@
       "type": "string",
       "description": "OAuth client_id URL",
       "env": "OAUTH_CLIENT_ID",
-      "default": "https://attest--johnandersen777-bsky-social.fedproxy.com/oauth-client-metadata.json"
+      "default": "https://tray.fedfork.com/oauth-client-metadata.json"
     },
     "oauth-redirect-uri": {
       "type": "string",
