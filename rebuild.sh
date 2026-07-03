@@ -45,6 +45,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
   /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string $URL_SCHEME" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string $URL_SCHEME" "$INFO_PLIST"
+  codesign --force --sign - "$APP/Contents/MacOS/url-scheme-bridge.dylib"
   codesign --force --sign - "$APP"
 
   # Insurance: ensure nothing came back to life during the build before launching.
