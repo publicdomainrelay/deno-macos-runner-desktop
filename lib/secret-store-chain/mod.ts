@@ -4,7 +4,7 @@
 // Priority: darwin keychain → gnome-keyring → filesystem (always last, always available)
 
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import type { KeychainStore } from "@publicdomainrelay/app-attest-abc";
+import type { KeychainStore } from "@publicdomainrelay/device-key-abc";
 
 // ===========================================================================
 // Backend descriptor
@@ -82,8 +82,7 @@ export function createChainKeychainStore(opts: ChainSecretStoreOpts): KeychainSt
 /**
  * Build standard chain for the current platform.
  * Priority: win32 CredMan → gnome-keyring → filesystem
- * (darwin uses app-attest-darwin Keychain directly in hono-macos-runner-desktop;
- *  hono-desktop always uses portable stores even on macOS)
+ * (all CLIs use portable stores on every platform, including macOS)
  *
  * Callers pass the platform-specific and fallback stores. The chain
  * resolves the first available one at construction time.

@@ -5,7 +5,7 @@ const TRAY_STYLE = `
 :root{
   --bg:rgba(246,246,248,.96);--border:rgba(0,0,0,.06);--shadow:0 10px 26px rgba(0,0,0,.12);
   --text:#1d1d1f;--sub:#6e6e73;--accent:#007aff;--accent-bg:rgba(0,122,255,.06);
-  --green:#34c759;--divider:rgba(0,0,0,.08);--gear-bg:rgba(0,0,0,.06);
+  --green:#34c759;--yellow:#ffcc00;--divider:rgba(0,0,0,.08);--gear-bg:rgba(0,0,0,.06);
   --danger-text:#c41e3a;--danger-border:#c41e3a;--banner-bg:#fdeceb;--banner-border:#f8c9c5;--banner-text:#a13b32;--banner-dismiss:#c79490;
   --avatar-bg:#d8dde3;--avatar-text:#48484a;--scope-border:rgba(0,0,0,.08);--scope-radio:#8e8e93;
   --card-bg:#f5f5f7;--card-border:rgba(0,0,0,.07);--nav-bg:#ececec;
@@ -14,7 +14,7 @@ const TRAY_STYLE = `
   :root{
     --bg:rgba(40,40,42,.9);--border:rgba(255,255,255,.1);--shadow:0 10px 30px rgba(0,0,0,.5);
     --text:#f2f2f3;--sub:#9a9a9e;--accent:#0a84ff;--accent-bg:rgba(10,132,255,.12);
-    --green:#32d74b;--divider:rgba(255,255,255,.08);--gear-bg:rgba(255,255,255,.08);
+    --green:#32d74b;--yellow:#ffd60a;--divider:rgba(255,255,255,.08);--gear-bg:rgba(255,255,255,.08);
     --danger-text:#ff3b3b;--danger-border:#ff3b3b;--banner-bg:rgba(248,113,113,.14);--banner-border:rgba(248,113,113,.3);--banner-text:#fca5a5;--banner-dismiss:#fca5a5;
     --avatar-bg:#4a4a4d;--avatar-text:#e3e3e5;--scope-border:rgba(255,255,255,.1);--scope-radio:#8e8e93;
     --card-bg:#2f2f32;--card-border:rgba(255,255,255,.14);--nav-bg:#2c2c2e;
@@ -127,6 +127,31 @@ html,body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sa
 .linking-text{font-size:12.5px;color:var(--text)}
 .linking-help{font-size:11px;color:var(--sub);margin:10px 2px 0}
 .cancel-link{font-size:12px;color:var(--accent);font-weight:600;text-align:center;margin-top:12px;cursor:pointer}
+.log-entry{padding:6px 0;border-bottom:1px solid var(--divider);font-size:10.5px;line-height:1.5}
+.log-entry:last-child{border-bottom:none}
+.log-ts{color:var(--sub);font-family:ui-monospace,'SF Mono',monospace;font-size:9.5px}
+.log-level{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase;margin-right:4px}
+.log-level.info{background:rgba(0,122,255,.12);color:var(--accent)}
+.log-level.warn{background:rgba(255,204,0,.12);color:var(--yellow)}
+.log-level.error{background:rgba(255,59,48,.12);color:var(--danger-text)}
+.log-level.debug{color:var(--sub)}
+.log-msg{color:var(--text)}
+.log-meta{color:var(--sub);font-family:ui-monospace,'SF Mono',monospace;font-size:9px;word-break:break-all;margin-top:2px}
+.log-scroll{max-height:400px;overflow-y:auto;margin:0 -4px;padding:0 4px}
+.log-empty{padding:24px;text-align:center;color:var(--sub);font-size:12px}
+.contract-tabs{display:flex;gap:0;margin-bottom:12px;border-bottom:1px solid var(--divider)}
+.contract-tab{padding:6px 14px;font-size:11.5px;font-weight:600;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent}
+.contract-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.contract-card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;padding:10px 13px;margin-bottom:8px}
+.contract-status{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.contract-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.contract-dot.running{background:var(--green)}
+.contract-dot.terminated{background:#8e8e93}
+.contract-dot.provisioning{background:var(--yellow)}
+.contract-did{font-size:11px;font-weight:600;color:var(--text);font-family:ui-monospace,'SF Mono',monospace}
+.contract-meta{font-size:9.5px;color:var(--sub);margin-top:3px}
+.contract-meta span{margin-right:12px}
+.contract-empty{padding:24px;text-align:center;color:var(--sub);font-size:12px}
 `;
 
 const TRAY_HTML = `<!DOCTYPE html>
@@ -157,9 +182,9 @@ const TRAY_HTML = `<!DOCTYPE html>
   <div class="appshell">
   <div class="navrail" id="navrail">
     <div class="navitem active" id="navHome" data-view="home">Home</div>
-    <div class="navitem" id="navGeneral" data-view="general">General</div>
+    <div class="navitem" id="navLogs" data-view="logs">Logs</div>
     <div class="navitem" id="navIdentity" data-view="identity">Identity</div>
-    <div class="navitem" id="navPolicy" data-view="policy">Policy</div>
+    <div class="navitem" id="navContracts" data-view="contracts">Contracts</div>
   </div>
   <div class="contentarea">
   <div id="paneHome">
@@ -220,8 +245,16 @@ const TRAY_HTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <div id="paneGeneral" class="settings-content" style="display:none">
-    <div class="placeholder">General settings are coming soon.</div>
+  <div id="paneLogs" class="settings-content" style="display:none">
+    <div class="section-title">Activity Log</div>
+    <div class="log-scroll" id="logScroll"><div class="log-empty" id="logEmpty">No log entries yet.</div><div id="logList"></div></div>
+  </div>
+  <div id="paneContracts" class="settings-content" style="display:none">
+    <div class="section-title">Contracts</div>
+    <div class="contract-tabs"><div class="contract-tab active" id="tabActive" data-subview="active">Active</div><div class="contract-tab" id="tabPast" data-subview="past">Past</div></div>
+    <div id="contractActiveList"></div>
+    <div id="contractPastList" style="display:none"></div>
+    <div id="contractEmpty" class="contract-empty">Loading contracts...</div>
   </div>
   <div id="paneIdentity" class="settings-content" style="display:none">
     <div class="section-title">Hardware-bound Key</div>
@@ -246,14 +279,6 @@ const TRAY_HTML = `<!DOCTYPE html>
     <div class="danger-row">
       <div class="danger-copy">Creates a brand-new Secure Enclave key pair. Your current ATProto association becomes invalid.</div>
       <div class="btn-outline-danger" id="regenBtn">Regenerate Key…</div>
-    </div>
-  </div>
-  <div id="panePolicy" class="settings-content" style="display:none">
-    <div style="text-align:center">
-      <div class="policy-pill">Coming soon</div>
-      <div class="policy-heading">Policy-based dispatch</div>
-      <div class="policy-body">Define rules for exactly which DIDs, domains, or networks may dispatch jobs to this device.</div>
-      <div class="policy-addrule"><div class="policy-addrule-text">+ Add rule</div></div>
     </div>
   </div>
   </div>
@@ -291,8 +316,9 @@ var APP_TOKEN='__APP_TOKEN__';
 var _fetch=window.fetch;
 window.fetch=function(input,init){init=init||{};init.headers=Object.assign({},init.headers,{'X-App-Token':APP_TOKEN});return _fetch(input,init);};
 var state=null;
-var views={home:$('paneHome'),general:$('paneGeneral'),identity:$('paneIdentity'),policy:$('panePolicy')};
-var navItems={home:$('navHome'),general:$('navGeneral'),identity:$('navIdentity'),policy:$('navPolicy')};
+var views={home:$('paneHome'),logs:$('paneLogs'),identity:$('paneIdentity'),contracts:$('paneContracts')};
+var navItems={home:$('navHome'),logs:$('navLogs'),identity:$('navIdentity'),contracts:$('navContracts')};
+var contractSubview='active';
 var panelEl=document.querySelector('.panel');
 var navrailEl=$('navrail');
 var currentPanelWidth=320;
@@ -433,6 +459,27 @@ function render(){
     if(running&&bd.proxyRef){
       $('bidderDetail').style.display='';$('bidderDetail').textContent='Relay: '+bd.proxyRef;
     }else{$('bidderDetail').style.display='none';}
+
+    // Log entries
+    var entries=d.logEntries||[];
+    $('logEmpty').style.display=entries.length?'none':'';
+    var logList=$('logList'),logHtml='';
+    for(var i=0;i<entries.length;i++){
+      try{var p=JSON.parse(entries[i]);
+        var lc=p.level||'info';
+        var ts=p.ts?new Date(p.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'';
+        logHtml+='<div class="log-entry"><span class="log-ts">'+ts+'</span> <span class="log-level '+lc+'">'+lc+'</span><span class="log-msg">'+p.message+'</span></div>';
+        var mk=Object.keys(p).filter(function(k){return k!=='ts'&&k!=='level'&&k!=='message';});
+        if(mk.length){var mo={};mk.forEach(function(k){mo[k]=p[k];});logHtml+='<div class="log-meta">'+JSON.stringify(mo).slice(0,200)+'</div>';}
+      }catch(e){}
+    }
+    logList.innerHTML=logHtml;
+    var scroll=$('logScroll');
+    if(scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<30)scroll.scrollTop=scroll.scrollHeight;
+
+    // Contracts
+    renderContracts(d.contracts||{active:[],past:[]});
+
     if(d.requestedView&&views[d.requestedView])showView(d.requestedView);
     lastMainHeight=$('mainView').scrollHeight;
     reportHeight();
@@ -492,6 +539,56 @@ function startConnect(){
   fetch('/api/atproto/start-oauth',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handle:handle})}).then(render);
 }
 $('connectLink').addEventListener('click',startConnect);
+
+function renderContracts(data){
+  var active=data.active||[],past=data.past||[];
+  var activeList=$('contractActiveList'),pastList=$('contractPastList'),empty=$('contractEmpty');
+  var hasActive=active.length>0,hasPast=past.length>0;
+  empty.style.display=(hasActive||hasPast)?'none':'';
+  activeList.style.display=contractSubview==='active'?'':'none';
+  pastList.style.display=contractSubview==='past'&&hasPast?'':'none';
+  activeList.innerHTML=active.map(function(c){return renderContractCard(c,false);}).join('');
+  pastList.innerHTML=past.map(function(c){return renderContractCard(c,true);}).join('');
+}
+
+function renderContractCard(c,isPast){
+  var dotClass=c.type==='accepted'?'provisioning':(c.type==='provisioning-failed'?'terminated':'running');
+  var statusText=isPast?'Terminated':(dotClass==='provisioning'?'Provisioning':'Running');
+  var duration='';
+  if(c.acceptedAt&&c.terminatedAt){
+    var secs=Math.floor((new Date(c.terminatedAt).getTime()-new Date(c.acceptedAt).getTime())/1000);
+    if(secs<60)duration=secs+'s';
+    else if(secs<3600)duration=Math.floor(secs/60)+'m '+(secs%60)+'s';
+    else duration=Math.floor(secs/3600)+'h '+Math.floor((secs%3600)/60)+'m';
+  }
+  var authorShort=(c.acceptAuthor||'?').slice(0,30);
+  if(c.acceptAuthor&&c.acceptAuthor.length>30)authorShort+='…';
+  var providerInfo=c.providerId?'<span>Provider: <code>'+c.providerId+'</code></span>':'';
+  return '<div class="contract-card">'+
+    '<div class="contract-status"><div class="contract-dot '+dotClass+'"></div><div class="contract-did">'+authorShort+'</div></div>'+
+    '<div class="contract-meta">'+
+      '<span>Accepted: '+(c.acceptedAt?new Date(c.acceptedAt).toLocaleString():'—')+'</span>'+
+      (isPast&&c.terminatedAt?'<span>Ended: '+new Date(c.terminatedAt).toLocaleString()+'</span>':'')+
+      (duration?'<span>Duration: '+duration+'</span>':'')+
+      providerInfo+
+    '</div>'+
+  '</div>';
+}
+
+$('tabActive').addEventListener('click',function(){
+  contractSubview='active';
+  $('tabActive').className='contract-tab active';
+  $('tabPast').className='contract-tab';
+  if(state&&state.contracts)renderContracts(state.contracts);
+  reportHeight();
+});
+$('tabPast').addEventListener('click',function(){
+  contractSubview='past';
+  $('tabPast').className='contract-tab active';
+  $('tabActive').className='contract-tab';
+  if(state&&state.contracts)renderContracts(state.contracts);
+  reportHeight();
+});
 
 render();
 setInterval(render,2000);

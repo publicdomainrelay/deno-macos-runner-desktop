@@ -1,15 +1,15 @@
 // @ts-nocheck — Deno FFI Deno.UnsafePointerView not in type declarations
 // Secret store — Windows Credential Manager via advapi32.dll FFI.
-// Implements KeychainStore from app-attest-abc.
+// Implements KeychainStore from device-key-abc.
 //
 // DPAPI-encrypted per-user store. No external dependencies.
-// Same FFI pattern as app-attest-darwin: lazy DLL load, sync wrappers.
+// Lazy DLL load, sync wrappers.
 //
 // Probe (isAvailable) does a test write — catches ERROR_NO_SUCH_LOGON_SESSION
 // (1312) from SSH sessions without full Windows logon.
 
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import type { KeychainStore } from "@publicdomainrelay/app-attest-abc";
+import type { KeychainStore } from "@publicdomainrelay/device-key-abc";
 
 // ===========================================================================
 // Factory config

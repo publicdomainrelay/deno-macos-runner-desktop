@@ -1,19 +1,24 @@
 // @ts-nocheck — Deno desktop runtime APIs not in compile-time types
-// macOS App Attest — Deno Desktop App
+// macOS tray — Deno Desktop App
 //
 // Thin CLI entrypoint composing ABC-layered packages:
-//   app-attest-darwin  — DeviceCheck FFI + Keychain
+//   device-key-webcrypto — software device keys (portable, Web Crypto)
+//   secret-store-chain — win32 CredMan → gnome-keyring → filesystem
 //   atproto-oauth-fetch — ATProto OAuth (PAR + PKCE + DPoP)
-//   badge-blue-keys-atproto — attestation→DID association records
+//   badge-blue-keys-atproto — key→DID association records
 
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createStructuredLogger, type StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import { createServe, type ServeHandle } from "@publicdomainrelay/serve";
 import { Hono } from "@hono/hono";
 import {
-  createAppAttestService, createKeychainStore, createUrlSchemePoller,
-} from "@publicdomainrelay/app-attest-darwin";
-import type { AppAttestService } from "@publicdomainrelay/app-attest-abc";
+  createDeviceKeyService, createRichKeychainStore,
+} from "@publicdomainrelay/device-key-webcrypto";
+import { createFilesystemKeychainStore } from "@publicdomainrelay/secret-store-filesystem";
+import { createGnomeKeychainStore } from "@publicdomainrelay/secret-store-gnome";
+import { createWin32KeychainStore } from "@publicdomainrelay/secret-store-win32";
+import { buildStandardChain } from "@publicdomainrelay/secret-store-chain";
+import type { DeviceKeyService } from "@publicdomainrelay/device-key-abc";
 import { createOAuthFlow, generateDpopKey, type ParState } from "@publicdomainrelay/atproto-oauth-fetch";
 import type { OAuthFlow } from "@publicdomainrelay/atproto-oauth-abc";
 import type { OAuthSession } from "@publicdomainrelay/atproto-oauth-common";
@@ -33,6 +38,7 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 // Market bidder — dynamic imports in startBidder() avoid deno desktop
 // module graph analyzer walking @atproto/* npm deps.
 import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
+import type { ContractEvent } from "@publicdomainrelay/market-bidder-abc";
 import type { RelayRef } from "@publicdomainrelay/serve";
 // Static import ensures deno compile bundles this file. Content extracted
 // at runtime to cache dir so copySystemctlShim finds it without fetch().
@@ -104,14 +110,44 @@ const log = {
   debug: (msg: string, meta?: Record<string, unknown>) => writeLog("debug", msg, meta),
 };
 
+const CONTRACT_LOG: ContractEvent[] = [];
+const CONTRACT_LOG_MAX = 500;
+
+function onContractChange(event: ContractEvent): void {
+  if (CONTRACT_LOG.length >= CONTRACT_LOG_MAX) CONTRACT_LOG.shift();
+  CONTRACT_LOG.push(event);
+}
+
 // ===========================================================================
 // Services (from ABC-layered packages)
 // ===========================================================================
 
-const bridgePath = (options.bridgePath as string) || "./devicecheck_bridge.dylib";
-const attest: AppAttestService = createAppAttestService({ bridgePath, logger });
-const keychain = createKeychainStore({ bridgePath, logger });
-const urlScheme = createUrlSchemePoller({ bridgePath, logger });
+const storageDir = (options.storageDir as string) || undefined;
+
+const gnomeStore = createGnomeKeychainStore({ logger });
+const win32Store = createWin32KeychainStore({ logger });
+const fsStore = createFilesystemKeychainStore({ storageDir, logger });
+
+let win32Available = false;
+let gnomeAvailable = false;
+try {
+  win32Available = (win32Store as ReturnType<typeof createWin32KeychainStore>).isAvailable();
+} catch { /* not on Windows or advapi32 not loadable */ }
+try {
+  gnomeAvailable = await (gnomeStore as ReturnType<typeof createGnomeKeychainStore>).isAvailable();
+} catch { /* gnome-keyring not running */ }
+
+const secretStore = buildStandardChain({
+  win32Store,
+  win32Available,
+  gnomeStore,
+  gnomeAvailable,
+  filesystemStore: fsStore,
+  logger,
+});
+
+const deviceKeys: DeviceKeyService = createDeviceKeyService({ keychain: secretStore, logger });
+const keychain = createRichKeychainStore(secretStore, { logger });
 
 const oauth: OAuthFlow & { startAuth: (handle: string) => Promise<{ did: string; authServer: string; authUrl: string; parState: ParState }> } = createOAuthFlow({
   clientId: OAUTH_CLIENT_ID,
@@ -300,10 +336,11 @@ async function startBidder(): Promise<void> {
     }> = [createComputeProviderHooks({ provider: localComputeProvider }) as never];
 
     marketBidder = await createMarketBidder({
-      logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
+      logger: log, serve: bidderServe, atproto, relay: bidderRelay, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
+      onContractChange,
     });
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
     // isn't built yet (no requests have arrived on this serve).
@@ -381,7 +418,7 @@ async function initKeysAndSession(): Promise<void> {
     log.info("persistent device key loaded from keychain", { keyId: persistentKeyId });
   } else {
     try {
-      persistentKeyId = await attest.generateKey();
+      persistentKeyId = await deviceKeys.generateKey();
       keychain.saveDeviceKeyId(persistentKeyId).then((ok) =>
         log.info("persistent device key generated and saved", { keyId: persistentKeyId, ok }),
       ).catch((e) => log.error("failed to save device key to keychain", { error: String(e) }));
@@ -389,8 +426,6 @@ async function initKeysAndSession(): Promise<void> {
       log.error("failed to generate persistent key", { error: String(e) });
     }
   }
-  urlScheme.register();
-
   const saved = await keychain.loadSession();
   if (!saved) {
     log.info("no saved session found in keychain, skipping restore");
@@ -502,6 +537,16 @@ app.get("/api/atproto/session", () =>
 
 app.get("/api/state", (c) => {
   const requestedView = c.req.query("requestedView") || null;
+  const active = new Map<string, ContractEvent>();
+  const past: ContractEvent[] = [];
+  for (const e of CONTRACT_LOG) {
+    if (e.type === "accepted" || e.type === "provisioned" || e.type === "provisioning-failed") {
+      active.set(e.key, e);
+    } else if (e.type === "terminated") {
+      active.delete(e.key);
+      past.push(e);
+    }
+  }
   return json({
     ...providerState,
     oauthInFlight, oauthError, persistentKeyId, associationRecordUri,
@@ -513,6 +558,8 @@ app.get("/api/state", (c) => {
       proxyRef: bidderRelay?.proxyRef ?? null,
       signerDid: marketKeypair?.did() ?? null,
     },
+    logEntries: [...LOG_RING],
+    contracts: { active: [...active.values()], past },
   });
 });
 
@@ -611,7 +658,7 @@ app.post("/api/atproto/unlink", (c) => {
 app.post("/api/atproto/regenerate-key", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   try {
-    persistentKeyId = await attest.generateKey();
+    persistentKeyId = await deviceKeys.generateKey();
     await keychain.saveDeviceKeyId(persistentKeyId!);
     oauthSession = null; keychain.delete("oauth-session");
     providerState.acceptScope = null; providerState.linkedAt = null;
@@ -797,43 +844,7 @@ const SERVE_PORT = serve.tcpPort;
 log.info("HTTP server started", { port: SERVE_PORT });
 setupWindowsAndTray(SERVE_PORT);
 
-// URL scheme poll (macOS kAEGetURL)
-setInterval(async () => {
-  const urlStr = urlScheme.poll();
-  if (!urlStr) return;
-  log.info("url scheme callback received", { url: urlStr });
-  try {
-    const u = new URL(urlStr);
-    const code = u.searchParams.get("code");
-    const state = u.searchParams.get("state");
-    const iss = u.searchParams.get("iss");
-    if (!code || !state || !iss || !parState || state !== parState.state) return;
-    const result = await oauth.handleCallback(
-      code, state, iss, parState.state, parState.codeVerifier,
-      parState.dpopKeyPair, parState.dpopPublicJwk, oauthServerNonce,
-    );
-    oauthSession = {
-      accessJwt: result.accessToken, refreshJwt: result.refreshToken,
-      did: result.did, handle: result.handle, pds: result.pds,
-      dpopKeyPair: result.dpopKeyPair!, dpopPublicJwk: result.dpopPublicJwk!,
-    };
-    oauthServerNonce = result.oauthServerNonce;
-    parState = null; oauthInFlight = false; oauthError = null;
-    if (!providerState.acceptScope) providerState.acceptScope = "only_me";
-    providerState.linkedAt = new Date().toISOString();
-    saveProviderState();
-    keychain.saveSession(oauthSession).catch(() => {});
-    associationRecordUri = await assoc.findOrCreateRecord(toBadgeSession(oauthSession), persistentKeyId!);
-    if (providerState.dispatchingEnabled && !bidderStarted) {
-      startBidder().catch((e) => log.error("bidder: post-login auto-start failed", { error: String(e) }));
-    }
-  } catch (e) {
-    oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
-    log.error("url scheme callback error", { error: String(e) });
-  }
-}, 500);
-
-log.info("App ready", { attestSupported: attest.isSupported() });
+log.info("App ready");
 
 // Signal handlers — ONLY in CLI
 function shutdown(): void {

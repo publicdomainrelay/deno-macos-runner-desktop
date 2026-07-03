@@ -1,17 +1,9 @@
-// App Attest ABC — pure interfaces for DeviceCheck attestation + Keychain.
-// Zero I/O, zero side effects. Imports only from app-attest-common (types).
-//
-// All AppAttestService methods are async — darwin wraps sync FFI calls,
-// none (portable) does real async Web Crypto operations.
+// Device key ABC — pure interfaces for software device keys + secret storage.
+// Zero I/O, zero side effects. Imports only from device-key-common (types).
 
-import type { AppAttestError } from "@publicdomainrelay/app-attest-common";
-
-/** Hardware-bound or software key attestation. */
-export interface AppAttestService {
-  isSupported(): boolean;
-  generateKey(): Promise<string>; // throws AppAttestError
-  attestKey(keyId: string, challengeHash: Uint8Array): Promise<Uint8Array>; // throws AppAttestError
-  generateAssertion(keyId: string, clientDataHash: Uint8Array): Promise<Uint8Array>; // throws AppAttestError
+/** Software device key generation. Same surface on every OS. */
+export interface DeviceKeyService {
+  generateKey(): Promise<string>; // throws DeviceKeyError
 }
 
 /** Persistent key-value store for secrets. */

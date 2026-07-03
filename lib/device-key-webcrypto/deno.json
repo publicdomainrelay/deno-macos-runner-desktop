@@ -1,5 +1,5 @@
 {
-  "name": "@publicdomainrelay/app-attest-darwin",
+  "name": "@publicdomainrelay/device-key-webcrypto",
   "version": "0.0.0",
   "license": "Unlicense",
   "exports": "./mod.ts"

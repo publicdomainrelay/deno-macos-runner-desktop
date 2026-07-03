@@ -1,6 +1,6 @@
 {
   "name": "macos-runner-desktop",
-  "description": "macOS compute provider desktop app with DeviceCheck attestation + ATProto OAuth + market bidder",
+  "description": "macOS compute provider desktop tray app with ATProto OAuth + market bidder",
   "options": {
     "service-name": {
       "type": "string",
@@ -8,11 +8,10 @@
       "env": "SERVICE_NAME",
       "default": "macos-runner-desktop"
     },
-    "bridge-path": {
+    "storage-dir": {
       "type": "string",
-      "description": "Path to devicecheck_bridge.dylib",
-      "env": "BRIDGE_PATH",
-      "default": "./devicecheck_bridge.dylib"
+      "description": "Directory for key storage and session persistence",
+      "env": "STORAGE_DIR"
     },
     "state-path": {
       "type": "string",
@@ -27,9 +26,9 @@
     },
     "oauth-redirect-uri": {
       "type": "string",
-      "description": "OAuth redirect URI (custom URL scheme)",
+      "description": "OAuth redirect URI (loopback or custom URL scheme)",
       "env": "OAUTH_REDIRECT_URI",
-      "default": "com.fedproxy.attest--johnandersen777-bsky-social:/callback"
+      "default": "http://127.0.0.1:PORT/"
     },
     "dispatcher-host": {
       "type": "string",

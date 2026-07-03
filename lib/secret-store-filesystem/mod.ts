@@ -1,9 +1,9 @@
 // Secret store — filesystem-backed JSON persistence.
 // Universal fallback. Works on all platforms with no dependencies.
-// Implements KeychainStore from app-attest-abc.
+// Implements KeychainStore from device-key-abc.
 
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import type { KeychainStore } from "@publicdomainrelay/app-attest-abc";
+import type { KeychainStore } from "@publicdomainrelay/device-key-abc";
 
 // ===========================================================================
 // Factory config

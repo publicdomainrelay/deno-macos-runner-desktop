@@ -1713,8 +1713,6 @@
       "hono-desktop": {
         "dependencies": [
           "jsr:@hono/hono@4",
-          "jsr:@publicdomainrelay/app-attest-abc@0",
-          "jsr:@publicdomainrelay/app-attest-none@0",
           "jsr:@publicdomainrelay/atproto-oauth-abc@0",
           "jsr:@publicdomainrelay/atproto-oauth-common@0",
           "jsr:@publicdomainrelay/atproto-oauth-fetch@0",
@@ -1722,6 +1720,8 @@
           "jsr:@publicdomainrelay/badge-blue-keys-atproto@0",
           "jsr:@publicdomainrelay/badge-blue-keys-common@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/device-key-abc@0",
+          "jsr:@publicdomainrelay/device-key-webcrypto@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-bidder-keys@0",
           "jsr:@publicdomainrelay/serve@0"
@@ -1729,7 +1729,7 @@
       },
       "lib/secret-store-win32": {
         "dependencies": [
-          "jsr:@publicdomainrelay/app-attest-abc@0",
+          "jsr:@publicdomainrelay/device-key-abc@0",
           "jsr:@publicdomainrelay/logger@0"
         ]
       }
@@ -2031,6 +2031,34 @@
       "jsr:@publicdomainrelay/market-lexicons@0.0.0": {
         "dependencies": [
           "npm:@atproto/lex@~0.1.3"
+        ]
+      },
+      "jsr:@publicdomainrelay/market-policy-abc@0.0.0": {},
+      "jsr:@publicdomainrelay/market-policy-direct-network@0.0.0": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/market-lexicons@0",
+          "jsr:@publicdomainrelay/market-policy-abc@0"
+        ]
+      },
+      "jsr:@publicdomainrelay/market-policy-only-me@0.0.0": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/market-lexicons@0",
+          "jsr:@publicdomainrelay/market-policy-abc@0"
+        ]
+      },
+      "jsr:@publicdomainrelay/market-policy-workflow-gha@0.0.0": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/market-lexicons@0",
+          "jsr:@publicdomainrelay/market-policy-abc@0"
+        ]
+      },
+      "jsr:@publicdomainrelay/market-policy@0.0.0": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/market-lexicons@0",
+          "jsr:@publicdomainrelay/market-policy-abc@0",
+          "jsr:@publicdomainrelay/market-policy-direct-network@0",
+          "jsr:@publicdomainrelay/market-policy-only-me@0",
+          "jsr:@publicdomainrelay/market-policy-workflow-gha@0"
         ]
       },
       "jsr:@publicdomainrelay/market-registry-abc@0.0.0": {},

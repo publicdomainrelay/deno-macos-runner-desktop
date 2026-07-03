@@ -8,7 +8,7 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { sha256 } from "@noble/hashes/sha256";
 import { base58btcEncode } from "@publicdomainrelay/badge-blue-keys-common";
-import type { KeychainStore } from "@publicdomainrelay/app-attest-abc";
+import type { KeychainStore } from "@publicdomainrelay/device-key-abc";
 
 const KC_MARKET_SIGNER_KEY = "market-signer-key";
 

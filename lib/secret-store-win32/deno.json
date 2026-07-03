@@ -5,6 +5,6 @@
   "exports": "./mod.ts",
   "imports": {
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
-    "@publicdomainrelay/app-attest-abc": "jsr:@publicdomainrelay/app-attest-abc@^0"
+    "@publicdomainrelay/device-key-abc": "jsr:@publicdomainrelay/device-key-abc@^0"
   }
 }

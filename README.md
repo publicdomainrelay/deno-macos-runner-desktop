@@ -1,105 +1,28 @@
-# macOS App Attest — Deno Desktop App
+# deno-macos-runner-desktop
 
-Uses Apple's DCAppAttestService (DeviceCheck framework) from a Deno desktop app
-via FFI. All app logic in TypeScript (`main.ts`).
+Bidder desktop tray UI.
 
-## Prerequisites
-
-- Deno 2.9+ (`deno desktop` available)
-- macOS 11+ (App Attest requires Secure Enclave — Macs with T2 or Apple Silicon)
-- Xcode CLI tools (for clang, frameworks)
-
-## Quick start
+## Build
 
 ```sh
-# 1. Build the FFI bridge dylib
-./build_bridge.sh
-
-# 2. Run the desktop app
-deno desktop main.ts
-
-# 3. Build standalone binary
-deno desktop main.ts --output ./dist/macOS-App-Attest.app
-
-# 4. Re-sign with entitlements (required for App Attest)
-codesign -f -s - --entitlements app.entitlements dist/macOS-App-Attest.app
+deno task build
 ```
 
-## Files
+- **macOS**: `deno desktop --no-check hono-macos-runner-desktop/mod.ts` → `.app` bundle
+- **Other**: `deno compile hono-desktop/mod.ts` → binary in `dist/`
 
-| File | Role |
-|------|------|
-| `main.ts` | TypeScript app: FFI bindings, HTTP server, web UI, BrowserWindow, tray, dock |
-| `devicecheck_bridge.m` | Objective-C bridge: wraps DCAppAttestService async APIs with sync C functions |
-| `devicecheck_bridge.dylib` | Compiled universal binary (arm64 + x86_64) |
-| `build_bridge.sh` | Compiles the bridge |
-| `deno.json` | Project config with desktop block |
-| `app.entitlements` | macOS entitlements for App Attest (`com.apple.developer.devicecheck.app-attest-opt-in`) |
+Custom Deno binary at `~/src/deno-fix/target/release/deno` required. Set
+`DENO_BIN` to override.
 
-## Architecture
+## Entrypoints
 
-```
-┌─────────────────────────────────────────┐
-│  Deno Desktop App                       │
-│  ┌───────────────────────────────────┐  │
-│  │  Webview (HTML/JS UI)             │  │
-│  │  bindings.generateKey()           │  │
-│  │  bindings.attestKey(id, challenge)│  │
-│  │  bindings.generateAssertion(...)  │  │
-│  └──────────┬────────────────────────┘  │
-│             │ win.bind() (in-process)    │
-│  ┌──────────▼────────────────────────┐  │
-│  │  Deno Runtime (TypeScript)        │  │
-│  │  Attestation API layer            │  │
-│  └──────────┬────────────────────────┘  │
-│             │ Deno.dlopen (FFI)          │
-│  ┌──────────▼────────────────────────┐  │
-│  │  devicecheck_bridge.dylib (C)     │  │
-│  │  dc_generate_key()                │  │
-│  │  dc_attest_key()                  │  │
-│  │  dc_generate_assertion()          │  │
-│  └──────────┬────────────────────────┘  │
-│             │ Objective-C                │
-│  ┌──────────▼────────────────────────┐  │
-│  │  DCAppAttestService (Apple)       │  │
-│  │  Secure Enclave + Apple servers   │  │
-│  └───────────────────────────────────┘  │
-└─────────────────────────────────────────┘
-```
+| Entrypoint | Purpose |
+|-----------|---------|
+| `hono-macos-runner-desktop/mod.ts` | macOS native (tray + WebView) |
+| `hono-desktop/mod.ts` | Cross-platform headless Hono server |
 
-## App Attest flow
-
-1. **Generate Key** — creates hardware-bound key pair in Secure Enclave
-2. **Attest Key** — Apple signs an attestation proving the key is genuine
-3. **Generate Assertion** — signs arbitrary data, verifiable by any server
-
-Used for: anti-fraud, device trust, replay prevention, bot detection.
-
-## Entitlements
-
-The app needs `com.apple.developer.devicecheck.app-attest-opt-in` with the
-`CDhash` key. Without this entitlement, `DCAppAttestService.isSupported` returns
-`false`.
-
-`deno desktop` does not currently embed custom entitlements during build. After
-building, re-sign:
-
-```sh
-codesign -f -s - --entitlements app.entitlements dist/macOS-App-Attest.app
-```
-
-For distribution with a Developer ID:
-
-```sh
-codesign -f -s "Developer ID Application: Your Name (TEAMID)" \
-  --entitlements app.entitlements \
-  --options runtime \
-  dist/macOS-App-Attest.app
-```
-
-## Limitations
-
-- **macOS only** — DCAppAttestService is Apple-platform-specific
-- **Requires Secure Enclave** — not available in VMs (unless T2/SEP passthrough)
-- **Requires code signature** — the app must be signed for attestation to work
-- App Attest requires network access to Apple's attestation servers
+Both entrypoints share the same portable key + secret-store surface:
+software ECDSA P-256 device keys (`device-key-webcrypto`) and the
+win32 CredMan → gnome-keyring → filesystem secret-store chain. No
+platform attestation (App Attest / DeviceCheck) — Linux and Windows have
+no equivalent primitive, so the surface stays identical across OSes.

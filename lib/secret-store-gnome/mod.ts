@@ -1,10 +1,10 @@
 // Secret store — gnome-keyring / libsecret via secret-tool CLI.
-// Implements KeychainStore from app-attest-abc.
+// Implements KeychainStore from device-key-abc.
 // Requires: libsecret-tools package (provides `secret-tool` binary)
 // Requires: DBus session bus running (gnome-keyring-daemon)
 
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import type { KeychainStore } from "@publicdomainrelay/app-attest-abc";
+import type { KeychainStore } from "@publicdomainrelay/device-key-abc";
 
 // ===========================================================================
 // Factory config

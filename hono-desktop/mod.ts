@@ -1,7 +1,7 @@
 // Portable Compute Provider — Linux container / headless server
 //
 // Thin CLI entrypoint composing ABC-layered packages:
-//   app-attest-none          — software keys (portable)
+//   device-key-webcrypto     — software keys (portable)
 //   secret-store-chain       — darwin → gnome-keyring → filesystem fallback
 //   atproto-oauth-fetch      — ATProto OAuth (PAR + PKCE + DPoP)
 //   badge-blue-keys-atproto  — attestation→DID association records
@@ -11,13 +11,13 @@ import { createStructuredLogger, type StructuredLoggerInterface } from "@publicd
 import { createServe, type ServeHandle } from "@publicdomainrelay/serve";
 import { Hono } from "@hono/hono";
 import {
-  createAppAttestService, createRichKeychainStore,
-} from "@publicdomainrelay/app-attest-none";
+  createDeviceKeyService, createRichKeychainStore,
+} from "@publicdomainrelay/device-key-webcrypto";
 import { createFilesystemKeychainStore, defaultHomeDir } from "@publicdomainrelay/secret-store-filesystem";
 import { createGnomeKeychainStore } from "@publicdomainrelay/secret-store-gnome";
 import { createWin32KeychainStore } from "@publicdomainrelay/secret-store-win32";
 import { buildStandardChain } from "@publicdomainrelay/secret-store-chain";
-import type { AppAttestService } from "@publicdomainrelay/app-attest-abc";
+import type { DeviceKeyService } from "@publicdomainrelay/device-key-abc";
 import { createOAuthFlow, type ParState } from "@publicdomainrelay/atproto-oauth-fetch";
 import type { OAuthFlow } from "@publicdomainrelay/atproto-oauth-abc";
 import type { OAuthSession } from "@publicdomainrelay/atproto-oauth-common";
@@ -36,6 +36,7 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 // Market bidder — dynamic imports in startBidder()
 import { loadOrCreateMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
+import type { ContractEvent } from "@publicdomainrelay/market-bidder-abc";
 import type { RelayRef } from "@publicdomainrelay/serve";
 import systemctlShimSource from "../../hono-compute-provider/lib/compute-provider-local/systemctl-shim.ts" with { type: "text" };
 
@@ -108,8 +109,16 @@ const log = {
   debug: (msg: string, meta?: Record<string, unknown>) => writeLog("debug", msg, meta),
 };
 
+const CONTRACT_LOG: ContractEvent[] = [];
+const CONTRACT_LOG_MAX = 500;
+
+function onContractChange(event: ContractEvent): void {
+  if (CONTRACT_LOG.length >= CONTRACT_LOG_MAX) CONTRACT_LOG.shift();
+  CONTRACT_LOG.push(event);
+}
+
 // ===========================================================================
-// Services — portable attest + platform-native secret store chain
+// Services — portable device keys + platform-native secret store chain
 // ===========================================================================
 
 const storageDir = (options.storageDir as string) || undefined;
@@ -138,7 +147,7 @@ const secretStore = buildStandardChain({
   logger,
 });
 
-const attest: AppAttestService = createAppAttestService({ keychain: secretStore, logger });
+const deviceKeys: DeviceKeyService = createDeviceKeyService({ keychain: secretStore, logger });
 const keychain = createRichKeychainStore(secretStore, { logger });
 
 const oauth: OAuthFlow = createOAuthFlow({
@@ -342,10 +351,11 @@ async function startBidderHeadless(): Promise<void> {
   ];
 
   marketBidder = await createMarketBidder({
-    logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
+    logger: log, serve: bidderServe, atproto, relay: bidderRelay, providers,
     skipServeBegin: true,
     offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
     acceptScope: providerState.acceptScope ?? undefined,
+    onContractChange,
   });
   await marketBidder.beginServe();
   await bidderServe.beginServe();
@@ -499,10 +509,11 @@ async function startBidder(): Promise<void> {
     ];
 
     marketBidder = await createMarketBidder({
-      logger, serve: bidderServe, atproto, relay: bidderRelay, providers,
+      logger: log, serve: bidderServe, atproto, relay: bidderRelay, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
+      onContractChange,
     });
     await marketBidder.beginServe();
     await bidderServe.beginServe();
@@ -577,7 +588,7 @@ async function initKeysAndSession(): Promise<void> {
     log.info("persistent device key loaded", { keyId: persistentKeyId });
   } else {
     try {
-      persistentKeyId = await attest.generateKey();
+      persistentKeyId = await deviceKeys.generateKey();
       keychain.saveDeviceKeyId(persistentKeyId).then((ok) =>
         log.info("device key generated and saved", { keyId: persistentKeyId, ok }),
       ).catch((e) => log.error("failed to save device key", { error: String(e) }));
@@ -690,6 +701,16 @@ app.get("/api/atproto/session", () =>
     : json({ loggedIn: false }));
 
 app.get("/api/state", (_c) => {
+  const active = new Map<string, ContractEvent>();
+  const past: ContractEvent[] = [];
+  for (const e of CONTRACT_LOG) {
+    if (e.type === "accepted" || e.type === "provisioned" || e.type === "provisioning-failed") {
+      active.set(e.key, e);
+    } else if (e.type === "terminated") {
+      active.delete(e.key);
+      past.push(e);
+    }
+  }
   return json({
     ...providerState,
     oauthInFlight, oauthError, persistentKeyId, associationRecordUri,
@@ -700,6 +721,8 @@ app.get("/api/state", (_c) => {
       proxyRef: bidderRelay?.proxyRef ?? null,
       signerDid: marketKeypair?.did() ?? null,
     },
+    logEntries: [...LOG_RING],
+    contracts: { active: [...active.values()], past },
   });
 });
 
@@ -794,7 +817,7 @@ app.post("/api/atproto/unlink", (c) => {
 app.post("/api/atproto/regenerate-key", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   try {
-    persistentKeyId = await attest.generateKey();
+    persistentKeyId = await deviceKeys.generateKey();
     await keychain.saveDeviceKeyId(persistentKeyId!);
     oauthSession = null; keychain.delete("oauth-session");
     providerState.acceptScope = null; providerState.linkedAt = null;
@@ -892,7 +915,7 @@ log.info("HTTP server started", { port: SERVE_PORT, hostname: HOSTNAME });
 // Initialize keys and restore session
 await initKeysAndSession();
 
-log.info("App ready", { attestSupported: attest.isSupported(), port: SERVE_PORT });
+log.info("App ready", { port: SERVE_PORT });
 log.info(`Open http://localhost:${SERVE_PORT}/tray to manage`);
 
 // ===========================================================================

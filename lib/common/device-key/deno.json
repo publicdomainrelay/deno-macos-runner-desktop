@@ -1,5 +1,5 @@
 {
-  "name": "@publicdomainrelay/app-attest-common",
+  "name": "@publicdomainrelay/device-key-common",
   "version": "0.0.0",
   "license": "Unlicense",
   "exports": "./mod.ts"
