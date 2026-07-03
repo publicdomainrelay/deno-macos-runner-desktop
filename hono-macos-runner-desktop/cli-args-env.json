@@ -26,9 +26,8 @@
     },
     "oauth-redirect-uri": {
       "type": "string",
-      "description": "OAuth redirect URI (loopback or custom URL scheme)",
-      "env": "OAUTH_REDIRECT_URI",
-      "default": "http://127.0.0.1:PORT/"
+      "description": "OAuth redirect URI (custom URL scheme, must match fedproxy-hosted client metadata)",
+      "env": "OAUTH_REDIRECT_URI"
     },
     "dispatcher-host": {
       "type": "string",

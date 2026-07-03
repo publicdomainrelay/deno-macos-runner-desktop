@@ -567,13 +567,14 @@ app.get("/tray", () =>
   new Response(TRAY_HTML.replace("__APP_TOKEN__", APP_TOKEN),
     { headers: { "content-type": "text/html; charset=utf-8" } }));
 
-// OAuth callback from system browser
-app.get("/", async (c) => {
-  const code = c.req.query("code");
-  const state = c.req.query("state");
-  const iss = c.req.query("iss");
-  if (!code || !state || !iss || !parState || state !== parState.state) {
-    return new Response("Invalid callback", { status: 400 });
+// OAuth callback — arrives either as an HTTP GET (loopback redirect_uri) or,
+// for custom URL scheme redirect_uri, via the native url-scheme-bridge poll
+// loop below. Both paths funnel through this one handler.
+async function processOAuthCallback(
+  code: string, state: string, iss: string,
+): Promise<{ ok: true; handle: string } | { ok: false; error: string }> {
+  if (!parState || state !== parState.state) {
+    return { ok: false, error: "invalid or stale state" };
   }
   try {
     const result = await oauth.handleCallback(
@@ -599,15 +600,27 @@ app.get("/", async (c) => {
       associationRecordUri = uri;
       log.info("findOrCreateRecord after login", { associationRecordUri });
     }).catch((e) => log.warn("findOrCreateRecord after login failed", { error: String(e) }));
-    return new Response(
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
-      { headers: { "content-type": "text/html; charset=utf-8" } });
+    return { ok: true, handle: result.handle };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     oauthInFlight = false; oauthError = msg;
     log.error("oauth: callback error", { error: msg });
-    return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auth Error</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#f38ba8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}</style></head><body><div><h2>Authentication Error</h2><p>${msg}</p></div></body></html>`, { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
+    return { ok: false, error: msg };
   }
+}
+
+app.get("/", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const iss = c.req.query("iss");
+  if (!code || !state || !iss) return new Response("Invalid callback", { status: 400 });
+  const result = await processOAuthCallback(code, state, iss);
+  if (result.ok) {
+    return new Response(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticated</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#cdd6f4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}.ok{color:#a6e3a1;font-size:24px;margin-bottom:12px}</style></head><body><div><div class="ok">Authenticated</div><p>Signed in as <strong>@${result.handle}</strong></p><p>You may close this window and return to the app.</p></div></body></html>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+  return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auth Error</title><style>body{font-family:-apple-system,sans-serif;background:#1e1e2e;color:#f38ba8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}</style></head><body><div><h2>Authentication Error</h2><p>${result.error}</p></div></body></html>`, { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
 });
 
 // -- POST routes (CSRF-protected) --
@@ -635,6 +648,7 @@ app.post("/api/atproto/start-oauth", async (c) => {
     return json({ ok: true, did: result.did });
   } catch (e) {
     oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
+    log.error("oauth: start-oauth failed", { error: oauthError });
     return json({ error: oauthError }, 500);
   }
 });
@@ -843,6 +857,55 @@ await serve.beginServe();
 const SERVE_PORT = serve.tcpPort;
 log.info("HTTP server started", { port: SERVE_PORT });
 setupWindowsAndTray(SERVE_PORT);
+
+// ===========================================================================
+// Custom URL scheme callback bridge (deno desktop has no NSAppleEventManager
+// hook). OAUTH_REDIRECT_URI_DEFAULT is a custom scheme, not loopback — the
+// system browser hands the callback to this app via `open`, which macOS
+// only routes if CFBundleURLTypes is registered (see rebuild.sh) and this
+// native bridge is polled for the pending kAEGetURL event.
+// ===========================================================================
+
+function resolveUrlBridgePath(): string {
+  const name = "url-scheme-bridge.dylib";
+  const devCandidate = `${import.meta.dirname}/${name}`;
+  try {
+    Deno.statSync(devCandidate);
+    return devCandidate;
+  } catch { /* not in dev tree, compiled bundle: dylib sits next to laufey_webview */ }
+  const execDir = Deno.execPath().replace(/\/[^/]+$/, "");
+  return `${execDir}/${name}`;
+}
+
+try {
+  const urlBridge = Deno.dlopen(resolveUrlBridgePath(), {
+    url_register_handler: { parameters: [], result: "void" },
+    url_scheme_pending: { parameters: [], result: "pointer" },
+    url_bridge_free_string: { parameters: ["pointer"], result: "void" },
+  });
+  urlBridge.symbols.url_register_handler();
+  const poll = setInterval(() => {
+    const ptr = urlBridge.symbols.url_scheme_pending();
+    if (!ptr) return;
+    const urlStr = new Deno.UnsafePointerView(ptr as NonNullable<typeof ptr>).getCString();
+    urlBridge.symbols.url_bridge_free_string(ptr);
+    log.info("url scheme callback received", { url: urlStr });
+    const u = new URL(urlStr);
+    const code = u.searchParams.get("code");
+    const state = u.searchParams.get("state");
+    const iss = u.searchParams.get("iss");
+    if (!code || !state || !iss) return;
+    processOAuthCallback(code, state, iss).then((result) => {
+      if (!result.ok) log.error("oauth: url scheme callback failed", { error: result.error });
+    });
+  }, 500);
+  Deno.unrefTimer?.(poll);
+  log.info("url scheme bridge loaded");
+} catch (e) {
+  log.warn("url scheme bridge unavailable, custom-scheme OAuth callback will not work", {
+    error: e instanceof Error ? e.message : String(e),
+  });
+}
 
 log.info("App ready");
 

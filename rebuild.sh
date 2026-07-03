@@ -31,6 +31,22 @@ if [[ "$(uname)" == "Darwin" ]]; then
     exit 1
   fi
   echo "=== Built: $APP ==="
+
+  # Native bridge for the custom URL scheme OAuth callback (kAEGetURL hook).
+  ./hono-macos-runner-desktop/build-url-scheme-bridge.sh
+  cp hono-macos-runner-desktop/url-scheme-bridge.dylib "$APP/Contents/MacOS/url-scheme-bridge.dylib"
+
+  # Register OAuth callback custom URL scheme (deno desktop has no hook for this).
+  INFO_PLIST="$APP/Contents/Info.plist"
+  URL_SCHEME="com.fedproxy.attest--johnandersen777-bsky-social"
+  /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$INFO_PLIST" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string $URL_SCHEME" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string $URL_SCHEME" "$INFO_PLIST"
+  codesign --force --sign - "$APP"
+
   # Insurance: ensure nothing came back to life during the build before launching.
   kill_app
   open "$APP" --stdout /tmp/deno-macos-runner-desktop.log --stderr /tmp/deno-macos-runner-desktop.log

@@ -128,13 +128,22 @@ async function resolveAuthServer(handle: string): Promise<{
   did: string; pds: string; authServer: string;
 }> {
   const did = await resolveHandleToDid(handle);
+  console.error(JSON.stringify({ component: "oauth-fetch", event: "resolved_did", handle, did }));
   const pds = await resolveDidToPds(did);
+  console.error(JSON.stringify({ component: "oauth-fetch", event: "resolved_pds", did, pds }));
   const mr = await fetch(`${pds}/.well-known/oauth-protected-resource`);
   if (!mr.ok) throw new Error(`PDS metadata: ${mr.status}`);
   const authServers: string[] = (await mr.json()).authorization_servers;
   if (!authServers?.[0]) throw new Error("No authorization_servers");
+  console.error(JSON.stringify({ component: "oauth-fetch", event: "resolved_auth_servers", authServers }));
   const am = await getAuthServerMeta(authServers[0]);
   if (!am.authorization_endpoint || !am.token_endpoint) throw new Error("Missing auth endpoints");
+  console.error(JSON.stringify({
+    component: "oauth-fetch", event: "auth_server_meta",
+    authorization_endpoint: am.authorization_endpoint,
+    pushed_authorization_request_endpoint: am.pushed_authorization_request_endpoint,
+    token_endpoint: am.token_endpoint,
+  }));
   return { did, pds, authServer: authServers[0] };
 }
 
@@ -180,17 +189,24 @@ async function pushPar(
     state,
   });
 
+  console.error(JSON.stringify({
+    component: "oauth-fetch", event: "par_request",
+    parEndpoint, params: Object.fromEntries(parBody.entries()),
+  }));
   let parDpop = await createDpopProof(dpop.keyPair, dpop.publicJwk, "POST", parEndpoint);
   let parRes = await fetch(parEndpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", "DPoP": parDpop },
     body: parBody.toString(),
   });
+  console.error(JSON.stringify({ component: "oauth-fetch", event: "par_response_status", status: parRes.status }));
 
   let oauthServerNonce: string | null = null;
+  let parErrBody: string | null = null;
   if (parRes.status === 400) {
-    const errBody = await parRes.text();
-    if (errBody.includes("use_dpop_nonce")) {
+    parErrBody = await parRes.text();
+    console.error(JSON.stringify({ component: "oauth-fetch", event: "par_400_body", body: parErrBody }));
+    if (parErrBody.includes("use_dpop_nonce")) {
       const serverNonce = parRes.headers.get("DPoP-Nonce");
       if (!serverNonce) throw new Error("PAR: server requested nonce but none provided");
       parDpop = await createDpopProof(dpop.keyPair, dpop.publicJwk, "POST", parEndpoint, serverNonce);
@@ -199,9 +215,10 @@ async function pushPar(
         headers: { "content-type": "application/x-www-form-urlencoded", "DPoP": parDpop },
         body: parBody.toString(),
       });
+      parErrBody = null;
     }
   }
-  if (!parRes.ok) throw new Error(`PAR failed: ${parRes.status} ${await parRes.text()}`);
+  if (!parRes.ok) throw new Error(`PAR failed: ${parRes.status} ${parErrBody ?? await parRes.text()}`);
 
   const parNonce = parRes.headers.get("DPoP-Nonce");
   if (parNonce) oauthServerNonce = parNonce;
@@ -241,15 +258,17 @@ async function exchangeCode(
   };
 
   let res = await doExchange(serverNonce);
+  let exchangeErrBody: string | null = null;
   if (res.status === 400) {
-    const errBody = await res.text();
-    if (errBody.includes("use_dpop_nonce")) {
+    exchangeErrBody = await res.text();
+    if (exchangeErrBody.includes("use_dpop_nonce")) {
       const newNonce = res.headers.get("DPoP-Nonce");
       if (!newNonce) throw new Error("Token exchange: server requested nonce but none provided");
       res = await doExchange(newNonce);
+      exchangeErrBody = null;
     }
   }
-  if (!res.ok) throw new Error(`Token exchange: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Token exchange: ${res.status} ${exchangeErrBody ?? await res.text()}`);
 
   const newNonce = res.headers.get("DPoP-Nonce") || null;
   const data = await res.json();

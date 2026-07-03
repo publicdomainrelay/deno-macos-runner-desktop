@@ -794,6 +794,7 @@ app.post("/api/atproto/start-oauth", async (c) => {
     return json({ ok: true, did: result.did });
   } catch (e) {
     oauthInFlight = false; oauthError = e instanceof Error ? e.message : String(e);
+    log.error("oauth: start-oauth failed", { error: oauthError });
     return json({ error: oauthError }, 500);
   }
 });
