@@ -771,9 +771,9 @@ function resizeTrayPanel(contentWidth: number, contentHeight: number): void {
 
 function showTrayPanel(view?: string): void {
   if (view) requestedTrayView = view;
-  trayPanelVisible = true;
-  if (trayPanelHandle) trayPanelHandle.show();
-  else if (trayPopoverWindow) {
+  if (trayPanelHandle) {
+    trayPanelHandle.show();
+  } else if (trayPopoverWindow) {
     try {
       const bounds = trayHandle?.getBounds();
       if (bounds) trayPopoverWindow.setPosition(bounds.x, bounds.y + bounds.height);
@@ -781,6 +781,7 @@ function showTrayPanel(view?: string): void {
     trayPopoverWindow.show();
     trayPopoverWindow.focus();
   }
+  trayPanelVisible = true;
 }
 
 function hideTrayPanel(): void {
@@ -790,8 +791,16 @@ function hideTrayPanel(): void {
 }
 
 function toggleTrayPanel(): void {
-  if (trayPanelVisible) hideTrayPanel();
-  else showTrayPanel();
+  // TrayPanel path: attachPanel already handles click -> toggle()
+  // internally. Only the BrowserWindow popover fallback reaches here
+  // via the explicit tray "click" listener.
+  if (trayPanelHandle) {
+    trayPanelHandle.toggle();
+  } else if (trayPanelVisible) {
+    hideTrayPanel();
+  } else {
+    showTrayPanel();
+  }
 }
 
 function setupWindowsAndTray(port: number): void {
@@ -819,19 +828,28 @@ function setupWindowsAndTray(port: number): void {
     if (e.detail.id === "quit") Deno.exit(0);
   });
 
+  // attachPanel internally registers tray "click" -> toggle(), and
+  // window "blur" -> hide() (hideOnBlur=true, the default).
+  // Do NOT add a second "click" handler -- two handlers toggling the
+  // same panel cancel each other out.
   let panel: Deno.TrayPanel | null = null;
   try {
     panel = tray.attachPanel({
       url: `http://127.0.0.1:${port}/tray`,
-      width: TRAY_PANEL_WIDTH_HOME, height: 1,
+      width: TRAY_PANEL_WIDTH_HOME,
+      // Default height (480) gives the WebView a real viewport so
+      // requestAnimationFrame fires, reportHeight() measures
+      // correctly, and the first resize POST arrives before the
+      // user clicks.
+      height: 480,
     });
     trayPanelHandle = panel;
-    tray.addEventListener("click", () => toggleTrayPanel());
   } catch { /* fallback to popover */ }
 
   if (!panel) {
     const popover = new Deno.BrowserWindow({
-      title: "", width: TRAY_PANEL_WIDTH_HOME, height: 1, frameless: true, noActivate: true,
+      title: "", width: TRAY_PANEL_WIDTH_HOME, height: 480,
+      frameless: true, noActivate: true,
     });
     trayPopoverWindow = popover;
     popover.navigate(`http://127.0.0.1:${port}/tray`);
