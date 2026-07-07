@@ -749,6 +749,7 @@ let trayHandle: Deno.Tray | null = null;
 let trayPanelHandle: Deno.TrayPanel | null = null;
 let trayPopoverWindow: Deno.BrowserWindow | null = null;
 let requestedTrayView: string | null = null;
+let trayPanelVisible = false;
 
 function resizeTrayPanel(contentWidth: number, contentHeight: number): void {
   const width = Math.max(1, Math.round(contentWidth));
@@ -771,6 +772,7 @@ function resizeTrayPanel(contentWidth: number, contentHeight: number): void {
 
 function showTrayPanel(view?: string): void {
   if (view) requestedTrayView = view;
+  trayPanelVisible = true;
   if (trayPanelHandle) trayPanelHandle.show();
   else if (trayPopoverWindow) {
     try {
@@ -780,6 +782,17 @@ function showTrayPanel(view?: string): void {
     trayPopoverWindow.show();
     trayPopoverWindow.focus();
   }
+}
+
+function hideTrayPanel(): void {
+  trayPanelVisible = false;
+  if (trayPanelHandle) trayPanelHandle.hide();
+  else if (trayPopoverWindow) trayPopoverWindow.hide();
+}
+
+function toggleTrayPanel(): void {
+  if (trayPanelVisible) hideTrayPanel();
+  else showTrayPanel();
 }
 
 function setupWindowsAndTray(port: number): void {
@@ -814,6 +827,7 @@ function setupWindowsAndTray(port: number): void {
       width: TRAY_PANEL_WIDTH_HOME, height: 1,
     });
     trayPanelHandle = panel;
+    tray.addEventListener("click", () => toggleTrayPanel());
   } catch { /* fallback to popover */ }
 
   if (!panel) {
@@ -823,14 +837,8 @@ function setupWindowsAndTray(port: number): void {
     trayPopoverWindow = popover;
     popover.navigate(`http://127.0.0.1:${port}/tray`);
     popover.hide();
-    tray.addEventListener("click", () => {
-      try {
-        const bounds = tray.getBounds();
-        if (bounds) popover.setPosition(bounds.x, bounds.y + bounds.height);
-      } catch { /* ignore */ }
-      popover.show(); popover.focus();
-    });
-    popover.addEventListener("blur", () => popover.hide());
+    tray.addEventListener("click", () => toggleTrayPanel());
+    popover.addEventListener("blur", () => hideTrayPanel());
   }
 
   // Dock menu (macOS-only)
