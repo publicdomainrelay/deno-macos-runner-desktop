@@ -360,26 +360,9 @@ async function startBidderHeadless(): Promise<void> {
     onContractChange,
   });
   await marketBidder.beginServe();
+  // serve.beginServe() connects relay, fires onConnected (creates offering,
+  // starts offering refresh).
   await bidderServe.beginServe();
-
-  // Offering record
-  try {
-    const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
-    const proxyRef = bidderRelay?.proxyRef ?? "";
-    const endpointUrl = proxyRef.startsWith("did:web:")
-      ? "https://" + proxyRef.slice("did:web:".length)
-      : `${atproto.did}#pdr_temp_market`;
-    await atproto.createRecord(OFFERING_NSID, {
-      $type: OFFERING_NSID,
-      endpointUrl,
-      appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
-      createdAt: new Date().toISOString(),
-      refreshedAt: new Date().toISOString(),
-    });
-    log.info("headless: offering created", { endpointUrl });
-  } catch (e) {
-    log.warn("headless: offering create failed", { error: String(e) });
-  }
 
   bidderStarted = true;
 
@@ -518,25 +501,9 @@ async function startBidder(): Promise<void> {
       onContractChange,
     });
     await marketBidder.beginServe();
+    // serve.beginServe() connects relay, fires onConnected (creates offering,
+    // starts offering refresh).
     await bidderServe.beginServe();
-
-    try {
-      const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
-      const proxyRef = bidderRelay?.proxyRef ?? "";
-      const endpointUrl = proxyRef.startsWith("did:web:")
-        ? "https://" + proxyRef.slice("did:web:".length)
-        : `${atproto.did}#pdr_temp_market`;
-      await atproto.createRecord(OFFERING_NSID, {
-        $type: OFFERING_NSID,
-        endpointUrl,
-        appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
-        createdAt: new Date().toISOString(),
-        refreshedAt: new Date().toISOString(),
-      });
-      log.info("bidder: created offering with appliesTo", { endpointUrl });
-    } catch (e) {
-      log.warn("bidder: offering create failed", { error: String(e) });
-    }
 
     // Create bidderAssociation reverse pointer for vouch graph traversal.
     if (associationRecordUri && oauthSession) {
@@ -812,7 +779,6 @@ app.post("/api/atproto/unlink", (c) => {
   stopBidder();
   oauthSession = null; keychain.delete("oauth-session");
   providerState.acceptScope = null; providerState.linkedAt = null;
-  providerState.dispatchingEnabled = false;
   associationRecordUri = null; saveProviderState();
   return json({ ok: true });
 });

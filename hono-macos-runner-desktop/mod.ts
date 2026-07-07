@@ -347,29 +347,9 @@ async function startBidder(): Promise<void> {
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
     // isn't built yet (no requests have arrived on this serve).
     await marketBidder.beginServe();
-    // Now start the serve — connects relay, fires onConnected (mounts OIDC).
+    // Now start the serve — connects relay, fires onConnected (mounts OIDC,
+    // creates offering, starts offering refresh).
     await bidderServe.beginServe();
-
-    // Create offering with correct appliesTo + relay endpoint URL now that
-    // the relay has connected and proxyRef is set. Old offerings from before
-    // providers existed have empty appliesTo — requester skips them.
-    try {
-      const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
-      const proxyRef = bidderRelay?.proxyRef ?? "";
-      const endpointUrl = proxyRef.startsWith("did:web:")
-        ? "https://" + proxyRef.slice("did:web:".length)
-        : `${atproto.did}#pdr_temp_market`;
-      await atproto.createRecord(OFFERING_NSID, {
-        $type: OFFERING_NSID,
-        endpointUrl,
-        appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
-        createdAt: new Date().toISOString(),
-        refreshedAt: new Date().toISOString(),
-      });
-      log.info("bidder: created offering with appliesTo", { endpointUrl });
-    } catch (e) {
-      log.warn("bidder: offering create failed", { error: String(e) });
-    }
 
     // Create bidderAssociation reverse pointer on the bidder's repo.
     // Bridges did:key → operator DID for vouch graph traversal.
@@ -666,7 +646,6 @@ app.post("/api/atproto/unlink", (c) => {
   stopBidder();
   oauthSession = null; keychain.delete("oauth-session");
   providerState.acceptScope = null; providerState.linkedAt = null;
-  providerState.dispatchingEnabled = false;
   associationRecordUri = null; saveProviderState();
   return json({ ok: true });
 });
