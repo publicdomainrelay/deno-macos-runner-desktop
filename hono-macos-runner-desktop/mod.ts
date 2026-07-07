@@ -187,13 +187,14 @@ interface ProviderState {
   dispatchingEnabled: boolean;
   workersEnabled: boolean;
   containersEnabled: boolean;
-  acceptScope: "only_me" | "direct_network" | null;
+  acceptScope: "only_me" | "direct_network" | "policy_based" | null;
+  workerPermissionMode: "deny-all" | "allow-net";
   linkedAt: string | null;
 }
 
 const DEFAULT_PROVIDER_STATE: ProviderState = {
   dispatchingEnabled: true, workersEnabled: true, containersEnabled: true,
-  acceptScope: null, linkedAt: null,
+  acceptScope: null, workerPermissionMode: "deny-all", linkedAt: null,
 };
 
 function resolveStatePath(): string {
@@ -336,6 +337,23 @@ async function startBidder(): Promise<void> {
       setup?(): Promise<void>; teardown?(): Promise<void>;
       buildCallbacks(d: Record<string, unknown>): Record<string, unknown>;
     }> = [createComputeProviderHooks({ provider: localComputeProvider }) as never];
+
+    if (providerState.workersEnabled) {
+      try {
+        const [{ createComputeProviderDenoWorker, createWorkerProviderHooks }, { createAllowNetOnlyPolicyHandler }] = await Promise.all([
+          import("@publicdomainrelay/market-bidder-worker"),
+          import("@publicdomainrelay/compute-deno-atproto"),
+        ]);
+        const workerProvider = await createComputeProviderDenoWorker({ logger: log, atproto: atproto as never });
+        const permissionHandler = providerState.workerPermissionMode === "allow-net"
+          ? createAllowNetOnlyPolicyHandler()
+          : undefined;
+        providers.push(createWorkerProviderHooks({ provider: workerProvider, permissionPolicyHandler: permissionHandler }) as never);
+        log.info("bidder: deno worker provider added", { permissionMode: providerState.workerPermissionMode });
+      } catch (e) {
+        log.warn("bidder: failed to create deno worker provider", { error: String(e) });
+      }
+    }
 
     marketBidder = await createMarketBidder({
       logger: log, serve: bidderServe, atproto, relay: bidderRelay, providers,
@@ -676,11 +694,12 @@ app.post("/api/open-external", async (c) => {
 app.post("/api/state", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   const body = await c.req.json().catch(() => ({}));
-  const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope"];
+  const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope", "workerPermissionMode"];
   const oldDispatch = providerState.dispatchingEnabled;
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
   const oldAcceptScope = providerState.acceptScope;
+  const oldWorkerPermMode = providerState.workerPermissionMode;
   for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
 
   if (providerState.dispatchingEnabled && !oauthSession) {
@@ -693,7 +712,8 @@ app.post("/api/state", async (c) => {
   const needsRestart = bidderStarted && (
     oldWorkers !== providerState.workersEnabled ||
     oldContainers !== providerState.containersEnabled ||
-    oldAcceptScope !== providerState.acceptScope
+    oldAcceptScope !== providerState.acceptScope ||
+    oldWorkerPermMode !== providerState.workerPermissionMode
   );
   if (needsRestart) stopBidder();
   if (providerState.dispatchingEnabled && !bidderStarted) {

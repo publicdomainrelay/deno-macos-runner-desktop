@@ -154,6 +154,7 @@ body{display:flex;align-items:flex-start;justify-content:center;min-height:100vh
 .contract-meta{font-size:9.5px;color:var(--sub);margin-top:3px}
 .contract-meta span{margin-right:12px}
 .contract-empty{padding:24px;text-align:center;color:var(--sub);font-size:12px}
+.perm-select{font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid var(--card-border);background:var(--card-bg);color:var(--text);cursor:pointer}
 `;
 
 const TRAY_HTML = `<!DOCTYPE html>
@@ -214,6 +215,10 @@ const TRAY_HTML = `<!DOCTYPE html>
       <div><div class="row-label">Deno Workers</div><div class="row-sub">Lightweight isolated functions</div></div>
       <div class="toggle" id="toggleWorkers"><div class="knob"></div></div>
     </div>
+    <div class="row compact" id="workerPermRow">
+      <div><div class="row-label">Worker Permissions</div><div class="row-sub" id="workerPermSub">Deny all</div></div>
+      <select id="workerPermSelect" class="perm-select"><option value="deny-all">Deny all</option><option value="allow-net">Allow net only</option></select>
+    </div>
     <div class="row compact" style="padding-bottom:12px">
       <div><div class="row-label">Containers</div><div class="row-sub">Full OCI containers via runtime</div></div>
       <div class="toggle" id="toggleContainers"><div class="knob"></div></div>
@@ -232,8 +237,8 @@ const TRAY_HTML = `<!DOCTYPE html>
       <div class="scope-row" id="scopeDirectNetwork" data-scope="direct_network">
         <div class="scope-radio"></div><div class="scope-label">Direct network</div>
       </div>
-      <div class="scope-row locked-todo">
-        <div class="scope-radio"></div><div class="scope-label">Policy-based</div><div class="scope-pill">TODO</div>
+      <div class="scope-row" id="scopePolicyBased" data-scope="policy_based">
+        <div class="scope-radio"></div><div class="scope-label">Policy-based</div>
       </div>
       <div class="scope-caption" id="scopeCaption">No remote scopes are available yet — nothing dispatches jobs here until you link an identity.</div>
     </div>
@@ -383,19 +388,26 @@ function render(){
     setToggle($('toggleDispatch'),d.dispatchingEnabled);
     setToggle($('toggleWorkers'),d.workersEnabled);
     setToggle($('toggleContainers'),d.containersEnabled);
+    $('workerPermRow').style.display = d.workersEnabled ? '' : 'none';
+    var wps = $('workerPermSelect'); wps.value = d.workerPermissionMode || 'deny-all';
+    $('workerPermSub').textContent = wps.value === 'allow-net' ? 'Allow net only' : 'Deny all';
 
-    var only=$('scopeOnlyMe'),direct=$('scopeDirectNetwork');
+    var only=$('scopeOnlyMe'),direct=$('scopeDirectNetwork'),policy=$('scopePolicyBased');
     only.className='scope-row'+(linked?' selectable':' locked');
     direct.className='scope-row'+(linked?' selectable':' locked');
+    policy.className='scope-row'+(linked?' selectable':' locked');
     only.querySelector('.scope-lock')&&only.removeChild(only.querySelector('.scope-lock'));
     if(!linked){
       if(!only.querySelector('.scope-lock')){var l1=document.createElement('div');l1.className='scope-lock';l1.textContent='\\uD83D\\uDD12';only.appendChild(l1);}
       if(!direct.querySelector('.scope-lock')){var l2=document.createElement('div');l2.className='scope-lock';l2.textContent='\\uD83D\\uDD12';direct.appendChild(l2);}
+      if(!policy.querySelector('.scope-lock')){var l3=document.createElement('div');l3.className='scope-lock';l3.textContent='\\uD83D\\uDD12';policy.appendChild(l3);}
     }else{
       var lo=only.querySelector('.scope-lock');if(lo)only.removeChild(lo);
       var ld=direct.querySelector('.scope-lock');if(ld)direct.removeChild(ld);
+      var lp=policy.querySelector('.scope-lock');if(lp)policy.removeChild(lp);
       if(d.acceptScope==='only_me')only.classList.add('selected');else only.classList.remove('selected');
       if(d.acceptScope==='direct_network')direct.classList.add('selected');else direct.classList.remove('selected');
+      if(d.acceptScope==='policy_based')policy.classList.add('selected');else policy.classList.remove('selected');
     }
     $('scopeCaption').style.display=linked?'none':'';
 
@@ -474,8 +486,10 @@ $('dispatchConfirm').addEventListener('click',function(){
 });
 $('toggleWorkers').addEventListener('click',function(){patchState({workersEnabled:!(state&&state.workersEnabled)});});
 $('toggleContainers').addEventListener('click',function(){patchState({containersEnabled:!(state&&state.containersEnabled)});});
+$('workerPermSelect').addEventListener('change',function(){patchState({workerPermissionMode:$('workerPermSelect').value});});
 $('scopeOnlyMe').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'only_me'});});
 $('scopeDirectNetwork').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'direct_network'});});
+$('scopePolicyBased').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'policy_based'});});
 $('bannerDismiss').addEventListener('click',function(){$('banner').className='banner';});
 $('bannerRetry').addEventListener('click',function(){startConnect();});
 $('cancelLink').addEventListener('click',function(){fetch('/api/atproto/cancel-oauth',{method:'POST'}).then(render);});
