@@ -228,8 +228,7 @@ async function startBidder(): Promise<void> {
     const [
       { createIngress },
       { createMarketBidder },
-      { createFirehoseWatcher: createJetstreamWatcher },
-      { createFirehoseWatcher: createSubscribeReposWatcher },
+      { createDefaultATProtoEventStreamsClient },
       { createComputeProviderHooks },
       { createOAuthAgent, createDesktopATProto },
       { loadOrGenerateKeypair },
@@ -240,8 +239,7 @@ async function startBidder(): Promise<void> {
     ] = await Promise.all([
       import("../../atproto-market/lib/did-key-ingress-proxy/mod.ts"),
       import("../../atproto-market/lib/market-bidder/mod.ts"),
-      import("../../typescript-helpers/lib/firehose-watcher-jetstream/mod.ts"),
-      import("../../typescript-helpers/lib/firehose-watcher-subscriberepos/mod.ts"),
+      import("../../typescript-helpers/lib/atproto-event-streams-client/mod.ts"),
       import("../../atproto-market/lib/market-bidder-compute/mod.ts"),
       import("../../atproto-market/lib/market-bidder-agent/mod.ts"),
       import("../../atproto-market/lib/market-atproto/mod.ts"),
@@ -360,43 +358,17 @@ async function startBidder(): Promise<void> {
       }
     }
 
-    // Firehose watcher for RFP discovery.
-    let rfpWatcherFactory: ((onRecord: (e: unknown) => void) => { close(): void }) | undefined;
-    let acceptWatcherFactory: typeof rfpWatcherFactory;
-    let eventWatcherFactory: typeof rfpWatcherFactory;
-    if (FIREHOSE_MODE !== "off") {
-      const DEFAULT_RELAY_URLS = ["https://reg.market.fedfork.com", "https://relay1.us-east.bsky.network", "https://relay1.us-west.bsky.network", "https://relay.mini-cloud-0002.chadig.com"];
-      const firehoseUrls = FIREHOSE_URL
-        ? FIREHOSE_URL.split(",").map((s: string) => s.trim()).filter(Boolean)
-        : DEFAULT_RELAY_URLS.map((u: string) => u.replace(/^https?:\/\//, "wss://") + "/xrpc/com.atproto.sync.subscribeRepos");
-      if (firehoseUrls.length > 0) {
-        const make = FIREHOSE_MODE === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-        const RFP_NSID = "com.publicdomainrelay.temp.market.rfp";
-        const ACCEPT_NSID = "com.publicdomainrelay.temp.market.accept";
-        const EVENT_NSID = "com.publicdomainrelay.temp.market.event";
-        if (firehoseUrls.length > 1) {
-          const factories = firehoseUrls.map((url: string) => (onRecord: (e: unknown) => void) =>
-            make({ url, wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log }));
-          rfpWatcherFactory = factories[0];
-        } else {
-          rfpWatcherFactory = (onRecord: (e: unknown) => void) =>
-            make({ url: firehoseUrls[0], wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
-        }
-        acceptWatcherFactory = (onRecord) =>
-          make({ url: firehoseUrls[0], wantedCollections: [ACCEPT_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
-        eventWatcherFactory = (onRecord) =>
-          make({ url: firehoseUrls[0], wantedCollections: [EVENT_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
-      }
-    }
+    // Build event streams client for firehose-based discovery across relays + Jetstreams.
+    const eventStreams = createDefaultATProtoEventStreamsClient({
+      log: log as StructuredLoggerInterface,
+    });
 
     marketBidder = await createMarketBidder({
       logger: log, serve: bidderServe, atproto, relay: bidderIngress, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
-      rfpWatcherFactory,
-      acceptWatcherFactory,
-      eventWatcherFactory,
+      eventStreams,
       onContractChange,
     });
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher

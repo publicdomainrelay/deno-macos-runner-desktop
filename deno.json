@@ -69,6 +69,9 @@
     "@publicdomainrelay/firehose-common": "../typescript-helpers/lib/firehose-common/mod.ts",
     "@publicdomainrelay/ws-reconnect": "../typescript-helpers/lib/ws-reconnect/mod.ts",
     "@publicdomainrelay/backlog-sequencer": "../typescript-helpers/lib/backlog-sequencer/mod.ts",
-    "@publicdomainrelay/firehose-watcher-abc": "../typescript-helpers/lib/firehose-watcher-abc/mod.ts"
+    "@publicdomainrelay/firehose-watcher-abc": "../typescript-helpers/lib/firehose-watcher-abc/mod.ts",
+    "@publicdomainrelay/atproto-event-stream-common": "../typescript-helpers/lib/atproto-event-stream-common/mod.ts",
+    "@publicdomainrelay/atproto-event-stream-abc": "../typescript-helpers/lib/abc/atproto-event-stream/mod.ts",
+    "@publicdomainrelay/atproto-event-streams-client": "../typescript-helpers/lib/atproto-event-streams-client/mod.ts"
   }
 }
