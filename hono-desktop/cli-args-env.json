@@ -42,10 +42,10 @@
       "env": "OAUTH_REDIRECT_URI",
       "default": "http://127.0.0.1:PORT/"
     },
-    "dispatcher-host": {
+    "ingress-proxy-host": {
       "type": "string",
       "description": "XRPC relay dispatcher host for market bidder",
-      "env": "RELAY_DISPATCHER_HOST",
+      "env": "INGRESS_PROXY_HOST",
       "default": "xrpc.fedproxy.com"
     },
     "plc-directory-url": {

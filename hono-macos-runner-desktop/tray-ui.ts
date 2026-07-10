@@ -468,8 +468,8 @@ function render(){
     $('bidderDot').className='bidder-dot'+(running?' on':' off');
     $('bidderLabel').textContent=running?'Market bidder active':'Market bidder offline';
     $('bidderSub').textContent=running?('Connected as '+((bd.signerDid||'').slice(0,24)+'…')):'Toggle Dispatching to start';
-    if(running&&bd.proxyRef){
-      $('bidderDetail').style.display='';$('bidderDetail').textContent='Relay: '+bd.proxyRef;
+    if(running&&bd.ingressRef){
+      $('bidderDetail').style.display='';$('bidderDetail').textContent='Relay: '+bd.ingressRef;
     }else{$('bidderDetail').style.display='none';}
 
     // Log entries

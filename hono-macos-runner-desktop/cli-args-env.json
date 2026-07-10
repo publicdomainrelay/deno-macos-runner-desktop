@@ -29,10 +29,10 @@
       "description": "OAuth redirect URI (custom URL scheme, must match fedproxy-hosted client metadata)",
       "env": "OAUTH_REDIRECT_URI"
     },
-    "dispatcher-host": {
+    "ingress-proxy-host": {
       "type": "string",
       "description": "XRPC relay dispatcher host for market bidder",
-      "env": "RELAY_DISPATCHER_HOST",
+      "env": "INGRESS_PROXY_HOST",
       "default": "xrpc.fedproxy.com"
     },
     "plc-directory-url": {
@@ -41,9 +41,15 @@
       "env": "PLC_DIRECTORY_URL",
       "default": "https://plc.directory"
     },
+    "firehose-mode": {
+      "type": "string",
+      "description": "Firehose transport: subscriberepos, jetstream, or off",
+      "env": "FIREHOSE_MODE",
+      "default": "off"
+    },
     "firehose-url": {
       "type": "string",
-      "description": "Firehose WebSocket URL for RFP discovery (jetstream or subscribeRepos)",
+      "description": "Firehose WebSocket URL for RFP discovery (jetstream or subscribeRepos, comma-separated for multiple)",
       "env": "FIREHOSE_URL"
     },
     "offering-refresh-sec": {

@@ -39,7 +39,7 @@ import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 // module graph analyzer walking @atproto/* npm deps.
 import { loadOrCreateMarketKeypair, deleteMarketKeypair, type MarketKeypair } from "@publicdomainrelay/market-bidder-keys";
 import type { ContractEvent } from "@publicdomainrelay/market-bidder-abc";
-import type { RelayRef } from "@publicdomainrelay/serve";
+import type { IngressRef } from "@publicdomainrelay/serve";
 // Static import ensures deno compile bundles this file. Content extracted
 // at runtime to cache dir so copySystemctlShim finds it without fetch().
 import systemctlShimSource from "../../hono-compute-provider/lib/compute-provider-local/systemctl-shim.ts" with { type: "text" };
@@ -85,9 +85,10 @@ const OAUTH_SCOPE = `atproto ${
   + " rpc:com.publicdomainrelay.temp.market.submitBid?aud=*"
   + " rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*";
 
-const DISPATCHER_HOST = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
+const INGRESS_PROXY_HOST = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
 const FIREHOSE_URL = options.firehoseUrl as string | undefined;
+const FIREHOSE_MODE = (options.firehoseMode as string) || "off";
 const OFFERING_REFRESH_MS = ((options.offeringRefreshSec as number) ?? 300) * 1000;
 const SKIP_MARKET = (options.skipMarket as boolean) ?? false;
 
@@ -175,7 +176,7 @@ let parState: ParState | null = null;
 let marketBidder: { beginServe(): Promise<void>; shutdown(): void } | null = null;
 let marketKeypair: MarketKeypair | null = null;
 let marketSignerHex: string | null = null;
-let bidderRelay: RelayRef | null = null;
+let bidderIngress: IngressRef | null = null;
 let bidderServe: ServeHandle | null = null;
 let bidderStarted = false;
 
@@ -225,8 +226,10 @@ async function startBidder(): Promise<void> {
     // Dynamic imports — relative paths avoid deno.json import map entries that
     // would trigger deno desktop module graph analyzer panic on @atproto/* deps
     const [
-      { createXrpcRelay },
+      { createIngress },
       { createMarketBidder },
+      { createFirehoseWatcher: createJetstreamWatcher },
+      { createFirehoseWatcher: createSubscribeReposWatcher },
       { createComputeProviderHooks },
       { createOAuthAgent, createDesktopATProto },
       { loadOrGenerateKeypair },
@@ -235,8 +238,10 @@ async function startBidder(): Promise<void> {
       { createOidcProvisioningEnricher },
       { createRbacProvisioner },
     ] = await Promise.all([
-      import("../../atproto-market/lib/xrpc-relay/mod.ts"),
+      import("../../atproto-market/lib/did-key-ingress-proxy/mod.ts"),
       import("../../atproto-market/lib/market-bidder/mod.ts"),
+      import("../../typescript-helpers/lib/firehose-watcher-jetstream/mod.ts"),
+      import("../../typescript-helpers/lib/firehose-watcher-subscriberepos/mod.ts"),
       import("../../atproto-market/lib/market-bidder-compute/mod.ts"),
       import("../../atproto-market/lib/market-bidder-agent/mod.ts"),
       import("../../atproto-market/lib/market-atproto/mod.ts"),
@@ -277,8 +282,8 @@ async function startBidder(): Promise<void> {
     };
     const atproto = await createDesktopATProto(logger, oauthAgent, badgeBlueSigner, idResolver as never, plcClient);
 
-    bidderRelay = createXrpcRelay({
-      logger, dispatcherHost: DISPATCHER_HOST,
+    bidderIngress = createIngress({
+      logger, ingressProxyHost: INGRESS_PROXY_HOST,
       signer: atproto.signer,
       keypair: { did: keypair.did.bind(keypair), sign: keypair.sign.bind(keypair) },
     });
@@ -289,7 +294,7 @@ async function startBidder(): Promise<void> {
     bidderServe = createServe({
       logger,
       tcp: { addr: "127.0.0.1", port: 0 },
-      relays: [bidderRelay],
+      relays: [bidderIngress],
     });
 
     // Ensure container runtime is ready on macOS before provisioning.
@@ -321,12 +326,12 @@ async function startBidder(): Promise<void> {
       atproto: atproto as never,
       serve: bidderServe,
       getIssuerUrl: () => {
-        const ref = bidderRelay?.proxyRef ?? "";
+        const ref = bidderIngress?.ingressRef ?? "";
         return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
       },
       containerMode: "container",
       oidcProvisioner: createOidcProvisioningEnricher(() => {
-        const ref = bidderRelay?.proxyRef ?? "";
+        const ref = bidderIngress?.ingressRef ?? "";
         return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
       }),
       rbacProvisioner: createRbacProvisioner(),
@@ -355,11 +360,33 @@ async function startBidder(): Promise<void> {
       }
     }
 
+    // Firehose watcher for RFP discovery.
+    let rfpWatcherFactory: ((onRecord: (e: unknown) => void) => { close(): void }) | undefined;
+    if (FIREHOSE_MODE !== "off") {
+      const DEFAULT_RELAY_URLS = ["https://reg.market.fedfork.com", "https://bsky.network", "https://relay.mini-cloud-0002.chadig.com"];
+      const firehoseUrls = FIREHOSE_URL
+        ? FIREHOSE_URL.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : DEFAULT_RELAY_URLS.map((u: string) => u.replace(/^https?:\/\//, "wss://") + "/xrpc/com.atproto.sync.subscribeRepos");
+      if (firehoseUrls.length > 0) {
+        const make = FIREHOSE_MODE === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+        const RFP_NSID = "com.publicdomainrelay.temp.market.rfp";
+        if (firehoseUrls.length > 1) {
+          const factories = firehoseUrls.map((url: string) => (onRecord: (e: unknown) => void) =>
+            make({ url, wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log }));
+          rfpWatcherFactory = factories[0];
+        } else {
+          rfpWatcherFactory = (onRecord: (e: unknown) => void) =>
+            make({ url: firehoseUrls[0], wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
+        }
+      }
+    }
+
     marketBidder = await createMarketBidder({
-      logger: log, serve: bidderServe, atproto, relay: bidderRelay, providers,
+      logger: log, serve: bidderServe, atproto, relay: bidderIngress, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
+      rfpWatcherFactory,
       onContractChange,
     });
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher
@@ -391,20 +418,20 @@ async function startBidder(): Promise<void> {
     }
 
     bidderStarted = true;
-    log.info("bidder: started", { did: atproto.did, proxyRef: bidderRelay?.proxyRef });
+    log.info("bidder: started", { did: atproto.did, ingressRef: bidderIngress?.ingressRef });
   } catch (e) {
     log.error("bidder: start failed", { error: String(e) });
-    try { bidderRelay?.close(); } catch { /* ignore */ }
+    try { bidderIngress?.close(); } catch { /* ignore */ }
     try { bidderServe?.shutdown(); } catch { /* ignore */ }
-    bidderRelay = null; bidderServe = null; marketBidder = null;
+    bidderIngress = null; bidderServe = null; marketBidder = null;
     marketKeypair = null; marketSignerHex = null;
   }
 }
 
 function stopBidder(): void {
   if (!bidderStarted) return;
-  try { marketBidder?.shutdown(); bidderRelay?.close(); bidderServe?.shutdown(); } catch (e) { log.warn("bidder: stop error", { error: String(e) }); }
-  marketBidder = null; bidderRelay = null; bidderServe = null; bidderStarted = false;
+  try { marketBidder?.shutdown(); bidderIngress?.close(); bidderServe?.shutdown(); } catch (e) { log.warn("bidder: stop error", { error: String(e) }); }
+  marketBidder = null; bidderIngress = null; bidderServe = null; bidderStarted = false;
   log.info("bidder: stopped");
 }
 
@@ -523,7 +550,7 @@ app.get("/api/health", () => json({ ok: true, logEntries: LOG_RING.length }));
 app.get("/api/bidder/status", () => json({
   running: bidderStarted,
   skipMarket: SKIP_MARKET,
-  proxyRef: bidderRelay?.proxyRef ?? null,
+  ingressRef: bidderIngress?.ingressRef ?? null,
   signerDid: marketKeypair?.did() ?? null,
   hasSession: !!oauthSession,
   dispatchingEnabled: providerState.dispatchingEnabled,
@@ -555,7 +582,7 @@ app.get("/api/state", (c) => {
     bidder: {
       running: bidderStarted,
       skipMarket: SKIP_MARKET,
-      proxyRef: bidderRelay?.proxyRef ?? null,
+      ingressRef: bidderIngress?.ingressRef ?? null,
       signerDid: marketKeypair?.did() ?? null,
     },
     logEntries: [...LOG_RING],
