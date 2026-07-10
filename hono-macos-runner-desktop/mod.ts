@@ -362,6 +362,8 @@ async function startBidder(): Promise<void> {
 
     // Firehose watcher for RFP discovery.
     let rfpWatcherFactory: ((onRecord: (e: unknown) => void) => { close(): void }) | undefined;
+    let acceptWatcherFactory: typeof rfpWatcherFactory;
+    let eventWatcherFactory: typeof rfpWatcherFactory;
     if (FIREHOSE_MODE !== "off") {
       const DEFAULT_RELAY_URLS = ["https://reg.market.fedfork.com", "https://relay1.us-east.bsky.network", "https://relay1.us-west.bsky.network", "https://relay.mini-cloud-0002.chadig.com"];
       const firehoseUrls = FIREHOSE_URL
@@ -370,6 +372,8 @@ async function startBidder(): Promise<void> {
       if (firehoseUrls.length > 0) {
         const make = FIREHOSE_MODE === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
         const RFP_NSID = "com.publicdomainrelay.temp.market.rfp";
+        const ACCEPT_NSID = "com.publicdomainrelay.temp.market.accept";
+        const EVENT_NSID = "com.publicdomainrelay.temp.market.event";
         if (firehoseUrls.length > 1) {
           const factories = firehoseUrls.map((url: string) => (onRecord: (e: unknown) => void) =>
             make({ url, wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log }));
@@ -378,6 +382,10 @@ async function startBidder(): Promise<void> {
           rfpWatcherFactory = (onRecord: (e: unknown) => void) =>
             make({ url: firehoseUrls[0], wantedCollections: [RFP_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
         }
+        acceptWatcherFactory = (onRecord) =>
+          make({ url: firehoseUrls[0], wantedCollections: [ACCEPT_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
+        eventWatcherFactory = (onRecord) =>
+          make({ url: firehoseUrls[0], wantedCollections: [EVENT_NSID], onRecord: onRecord as (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => void, log });
       }
     }
 
@@ -387,6 +395,8 @@ async function startBidder(): Promise<void> {
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
       rfpWatcherFactory,
+      acceptWatcherFactory,
+      eventWatcherFactory,
       onContractChange,
     });
     // Mount market routes on bidderServe.app BEFORE beginServe so Hono matcher

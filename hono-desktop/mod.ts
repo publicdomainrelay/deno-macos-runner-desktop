@@ -265,6 +265,8 @@ async function startBidderHeadless(): Promise<void> {
     { createLocalComputeProvider },
     { createOidcProvisioningEnricher },
     { createRbacProvisioner },
+        { createFirehoseWatcher: createJetstreamWatcherH },
+        { createFirehoseWatcher: createSubscribeReposWatcherH },
   ] = await Promise.all([
     import("@atproto/crypto"),
     import("@publicdomainrelay/market-atproto"),
@@ -276,6 +278,8 @@ async function startBidderHeadless(): Promise<void> {
     import("../../hono-compute-provider/lib/compute-provider-local/mod.ts"),
     import("../../hono-compute-provider/lib/oidc-issuer-hono/mod.ts"),
     import("../../hono-compute-provider/lib/rbac-atproto/mod.ts"),
+    import("../../typescript-helpers/lib/firehose-watcher-jetstream/mod.ts"),
+    import("../../typescript-helpers/lib/firehose-watcher-subscriberepos/mod.ts"),
   ]);
 
   const keypair = await Secp256k1Keypair.create({ exportable: true });
@@ -353,11 +357,27 @@ async function startBidderHeadless(): Promise<void> {
     createComputeProviderHooks({ provider: localComputeProvider }),
   ];
 
+  // Firehose watchers for RFP/ACCEPT/EVENT discovery.
+  const firehoseUrl = "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos";
+  const makeWatcher = createSubscribeReposWatcherH;
+  const RFP_NSID = "com.publicdomainrelay.temp.market.rfp";
+  const ACCEPT_NSID = "com.publicdomainrelay.temp.market.accept";
+  const EVENT_NSID = "com.publicdomainrelay.temp.market.event";
+  const rfpWatcherFactory = (onRecord: (e: unknown) => void) =>
+    makeWatcher({ url: firehoseUrl, wantedCollections: [RFP_NSID], onRecord: onRecord as never, log });
+  const acceptWatcherFactory = (onRecord: (e: unknown) => void) =>
+    makeWatcher({ url: firehoseUrl, wantedCollections: [ACCEPT_NSID], onRecord: onRecord as never, log });
+  const eventWatcherFactory = (onRecord: (e: unknown) => void) =>
+    makeWatcher({ url: firehoseUrl, wantedCollections: [EVENT_NSID], onRecord: onRecord as never, log });
+
   marketBidder = await createMarketBidder({
     logger: log, serve: bidderServe, atproto, relay: bidderIngress, providers,
     skipServeBegin: true,
     offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
     acceptScope: providerState.acceptScope ?? undefined,
+    rfpWatcherFactory,
+    acceptWatcherFactory,
+    eventWatcherFactory,
     onContractChange,
   });
   await marketBidder.beginServe();
@@ -395,6 +415,8 @@ async function startBidder(): Promise<void> {
       { createLocalComputeProvider },
       { createOidcProvisioningEnricher },
       { createRbacProvisioner },
+      { createFirehoseWatcher: createJetstreamWatcher },
+      { createFirehoseWatcher: createSubscribeReposWatcher },
     ] = await Promise.all([
       import("../../atproto-market/lib/did-key-ingress-proxy/mod.ts"),
       import("../../atproto-market/lib/market-bidder/mod.ts"),
@@ -405,6 +427,8 @@ async function startBidder(): Promise<void> {
       import("../../hono-compute-provider/lib/compute-provider-local/mod.ts"),
       import("../../hono-compute-provider/lib/oidc-issuer-hono/mod.ts"),
       import("../../hono-compute-provider/lib/rbac-atproto/mod.ts"),
+      import("../../typescript-helpers/lib/firehose-watcher-jetstream/mod.ts"),
+      import("../../typescript-helpers/lib/firehose-watcher-subscriberepos/mod.ts"),
     ]);
 
     const { keypair, hex } = await loadOrCreateMarketKeypair(keychain);
@@ -511,11 +535,27 @@ async function startBidder(): Promise<void> {
       }
     }
 
+    // Firehose watchers — RFP, ACCEPT, EVENT (fallback when submit* absent).
+    const firehoseUrl = "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos";
+    const makeWatcher = createSubscribeReposWatcher;
+    const RFP_NSID = "com.publicdomainrelay.temp.market.rfp";
+    const ACCEPT_NSID = "com.publicdomainrelay.temp.market.accept";
+    const EVENT_NSID = "com.publicdomainrelay.temp.market.event";
+    const rfpWatcherFactory = (onRecord: (e: unknown) => void) =>
+      makeWatcher({ url: firehoseUrl, wantedCollections: [RFP_NSID], onRecord: onRecord as never, log });
+    const acceptWatcherFactory = (onRecord: (e: unknown) => void) =>
+      makeWatcher({ url: firehoseUrl, wantedCollections: [ACCEPT_NSID], onRecord: onRecord as never, log });
+    const eventWatcherFactory = (onRecord: (e: unknown) => void) =>
+      makeWatcher({ url: firehoseUrl, wantedCollections: [EVENT_NSID], onRecord: onRecord as never, log });
+
     marketBidder = await createMarketBidder({
       logger: log, serve: bidderServe, atproto, relay: bidderIngress, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
       acceptScope: providerState.acceptScope ?? undefined,
+      rfpWatcherFactory,
+      acceptWatcherFactory,
+      eventWatcherFactory,
       onContractChange,
     });
     await marketBidder.beginServe();
