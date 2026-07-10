@@ -363,7 +363,7 @@ async function startBidder(): Promise<void> {
     // Firehose watcher for RFP discovery.
     let rfpWatcherFactory: ((onRecord: (e: unknown) => void) => { close(): void }) | undefined;
     if (FIREHOSE_MODE !== "off") {
-      const DEFAULT_RELAY_URLS = ["https://reg.market.fedfork.com", "https://bsky.network", "https://relay.mini-cloud-0002.chadig.com"];
+      const DEFAULT_RELAY_URLS = ["https://reg.market.fedfork.com", "https://relay1.us-east.bsky.network", "https://relay1.us-west.bsky.network", "https://relay.mini-cloud-0002.chadig.com"];
       const firehoseUrls = FIREHOSE_URL
         ? FIREHOSE_URL.split(",").map((s: string) => s.trim()).filter(Boolean)
         : DEFAULT_RELAY_URLS.map((u: string) => u.replace(/^https?:\/\//, "wss://") + "/xrpc/com.atproto.sync.subscribeRepos");
