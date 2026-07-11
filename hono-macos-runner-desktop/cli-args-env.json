@@ -32,8 +32,7 @@
     "ingress-proxy-host": {
       "type": "string",
       "description": "XRPC relay dispatcher host for market bidder",
-      "env": "INGRESS_PROXY_HOST",
-      "default": "xrpc.fedproxy.com"
+      "env": "INGRESS_PROXY_HOST"
     },
     "plc-directory-url": {
       "type": "string",

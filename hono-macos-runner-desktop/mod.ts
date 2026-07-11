@@ -85,7 +85,7 @@ const OAUTH_SCOPE = `atproto ${
   + " rpc:com.publicdomainrelay.temp.market.submitBid?aud=*"
   + " rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*";
 
-const INGRESS_PROXY_HOST = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
+const INGRESS_PROXY_HOST = (options.ingressProxyHost as string);
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";
 const FIREHOSE_URL = options.firehoseUrl as string | undefined;
 const FIREHOSE_MODE = (options.firehoseMode as string) || "off";
