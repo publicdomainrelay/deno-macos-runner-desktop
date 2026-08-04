@@ -231,14 +231,14 @@ const TRAY_HTML = `<!DOCTYPE html>
     </div>
     <div class="section-header">Accept Jobs From</div>
     <div class="scope-list">
-      <div class="scope-row" id="scopeOnlyMe" data-scope="only_me">
+      <div class="scope-row" id="scopeOnlyMe" data-scope="only-me">
         <div class="scope-radio"></div><div class="scope-label">Only me</div>
       </div>
-      <div class="scope-row" id="scopeDirectNetwork" data-scope="direct_network">
-        <div class="scope-radio"></div><div class="scope-label">Direct network</div>
+      <div class="scope-row" id="scopeDirectNetwork" data-scope="tangled-vouch">
+        <div class="scope-radio"></div><div class="scope-label">Tangled vouch</div>
       </div>
-      <div class="scope-row" id="scopePolicyBased" data-scope="policy_based">
-        <div class="scope-radio"></div><div class="scope-label">Policy-based</div>
+      <div class="scope-row" id="scopePolicyBased" data-scope="mutuals">
+        <div class="scope-radio"></div><div class="scope-label">Mutuals</div>
       </div>
       <div class="scope-caption" id="scopeCaption">No remote scopes are available yet — nothing dispatches jobs here until you link an identity.</div>
     </div>
@@ -405,9 +405,9 @@ function render(){
       var lo=only.querySelector('.scope-lock');if(lo)only.removeChild(lo);
       var ld=direct.querySelector('.scope-lock');if(ld)direct.removeChild(ld);
       var lp=policy.querySelector('.scope-lock');if(lp)policy.removeChild(lp);
-      if(d.acceptScope==='only_me')only.classList.add('selected');else only.classList.remove('selected');
-      if(d.acceptScope==='direct_network')direct.classList.add('selected');else direct.classList.remove('selected');
-      if(d.acceptScope==='policy_based')policy.classList.add('selected');else policy.classList.remove('selected');
+      if(d.policy==='only-me')only.classList.add('selected');else only.classList.remove('selected');
+      if(d.policy==='tangled-vouch')direct.classList.add('selected');else direct.classList.remove('selected');
+      if(d.policy==='mutuals')policy.classList.add('selected');else policy.classList.remove('selected');
     }
     $('scopeCaption').style.display=linked?'none':'';
 
@@ -487,9 +487,9 @@ $('dispatchConfirm').addEventListener('click',function(){
 $('toggleWorkers').addEventListener('click',function(){patchState({workersEnabled:!(state&&state.workersEnabled)});});
 $('toggleContainers').addEventListener('click',function(){patchState({containersEnabled:!(state&&state.containersEnabled)});});
 $('workerPermSelect').addEventListener('change',function(){patchState({workerPermissionMode:$('workerPermSelect').value});});
-$('scopeOnlyMe').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'only_me'});});
-$('scopeDirectNetwork').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'direct_network'});});
-$('scopePolicyBased').addEventListener('click',function(){if(state&&state.session)patchState({acceptScope:'policy_based'});});
+$('scopeOnlyMe').addEventListener('click',function(){if(state&&state.session)patchState({policy:'only-me'});});
+$('scopeDirectNetwork').addEventListener('click',function(){if(state&&state.session)patchState({policy:'tangled-vouch'});});
+$('scopePolicyBased').addEventListener('click',function(){if(state&&state.session)patchState({policy:'mutuals'});});
 $('bannerDismiss').addEventListener('click',function(){$('banner').className='banner';});
 $('bannerRetry').addEventListener('click',function(){startConnect();});
 $('cancelLink').addEventListener('click',function(){fetch('/api/atproto/cancel-oauth',{method:'POST'}).then(render);});

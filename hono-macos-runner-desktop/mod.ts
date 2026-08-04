@@ -188,14 +188,14 @@ interface ProviderState {
   dispatchingEnabled: boolean;
   workersEnabled: boolean;
   containersEnabled: boolean;
-  acceptScope: "only_me" | "direct_network" | "policy_based" | null;
+  policy: "only-me" | "tangled-vouch" | "mutuals" | null;
   workerPermissionMode: "deny-all" | "allow-net";
   linkedAt: string | null;
 }
 
 const DEFAULT_PROVIDER_STATE: ProviderState = {
   dispatchingEnabled: true, workersEnabled: true, containersEnabled: true,
-  acceptScope: null, workerPermissionMode: "deny-all", linkedAt: null,
+  policy: null, workerPermissionMode: "deny-all", linkedAt: null,
 };
 
 function resolveStatePath(): string {
@@ -367,7 +367,7 @@ async function startBidder(): Promise<void> {
       logger: log, serve: bidderServe, atproto, relay: bidderIngress, providers,
       skipServeBegin: true,
       offeringRefreshMs: OFFERING_REFRESH_MS > 0 ? OFFERING_REFRESH_MS : undefined,
-      acceptScope: providerState.acceptScope ?? undefined,
+      policy: providerState.policy ?? undefined,
       eventStreams,
       onContractChange,
     });
@@ -597,7 +597,7 @@ async function processOAuthCallback(
     };
     oauthServerNonce = result.oauthServerNonce;
     parState = null; oauthInFlight = false; oauthError = null;
-    if (!providerState.acceptScope) providerState.acceptScope = "only_me";
+    if (!providerState.policy) providerState.policy = "only-me";
     providerState.linkedAt = new Date().toISOString();
     saveProviderState();
     keychain.saveSession(oauthSession).catch(() => {});
@@ -672,7 +672,7 @@ app.post("/api/atproto/unlink", (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   stopBidder();
   oauthSession = null; keychain.delete("oauth-session");
-  providerState.acceptScope = null; providerState.linkedAt = null;
+  providerState.policy = null; providerState.linkedAt = null;
   associationRecordUri = null; saveProviderState();
   return json({ ok: true });
 });
@@ -683,7 +683,7 @@ app.post("/api/atproto/regenerate-key", async (c) => {
     persistentKeyId = await deviceKeys.generateKey();
     await keychain.saveDeviceKeyId(persistentKeyId!);
     oauthSession = null; keychain.delete("oauth-session");
-    providerState.acceptScope = null; providerState.linkedAt = null;
+    providerState.policy = null; providerState.linkedAt = null;
     associationRecordUri = null; saveProviderState();
     return json({ ok: true, keyId: persistentKeyId });
   } catch (e) {
@@ -703,11 +703,11 @@ app.post("/api/open-external", async (c) => {
 app.post("/api/state", async (c) => {
   if (c.req.header("X-App-Token") !== APP_TOKEN) return json({ error: "unauthorized" }, 401);
   const body = await c.req.json().catch(() => ({}));
-  const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "acceptScope", "workerPermissionMode"];
+  const allowed: (keyof ProviderState)[] = ["dispatchingEnabled", "workersEnabled", "containersEnabled", "policy", "workerPermissionMode"];
   const oldDispatch = providerState.dispatchingEnabled;
   const oldWorkers = providerState.workersEnabled;
   const oldContainers = providerState.containersEnabled;
-  const oldAcceptScope = providerState.acceptScope;
+  const oldPolicy = providerState.policy;
   const oldWorkerPermMode = providerState.workerPermissionMode;
   for (const k of allowed) if (k in body) (providerState as Record<string, unknown>)[k] = body[k];
 
@@ -721,7 +721,7 @@ app.post("/api/state", async (c) => {
   const needsRestart = bidderStarted && (
     oldWorkers !== providerState.workersEnabled ||
     oldContainers !== providerState.containersEnabled ||
-    oldAcceptScope !== providerState.acceptScope ||
+    oldPolicy !== providerState.policy ||
     oldWorkerPermMode !== providerState.workerPermissionMode
   );
   if (needsRestart) stopBidder();
