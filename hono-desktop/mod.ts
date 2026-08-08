@@ -26,7 +26,8 @@ import {
 } from "@publicdomainrelay/atproto-oauth-common";
 import { createAssociationService } from "@publicdomainrelay/badge-blue-keys-atproto";
 import type { AssociationService } from "@publicdomainrelay/badge-blue-keys-abc";
-import { BADGE_BLUE_KEYS_NSID, type BadgeBlueKeysSession } from "@publicdomainrelay/badge-blue-keys-common";
+import type { BadgeBlueKeysSession } from "@publicdomainrelay/badge-blue-keys-common";
+import { DESKTOP_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import {
   TRAY_STYLE, TRAY_HTML,
 } from "./tray-ui.ts";
@@ -61,25 +62,8 @@ const BIDDER_HOSTNAME = Deno.hostname();
 
 const OAUTH_CLIENT_ID = (options.oauthClientId as string) || OAUTH_CLIENT_ID_DEFAULT;
 const OAUTH_REDIRECT_URI = (options.oauthRedirectUri as string) || OAUTH_REDIRECT_URI_DEFAULT;
-const BIDDER_SCOPE_COLLECTIONS = [
-  "com.publicdomainrelay.temp.auth.allowlist.rbacDid",
-  "com.publicdomainrelay.temp.market.offering",
-  "com.publicdomainrelay.temp.market.bid",
-  "com.publicdomainrelay.temp.market.bids.free",
-  "com.publicdomainrelay.temp.market.bids.x402",
-  "com.publicdomainrelay.temp.market.receipt",
-  "com.publicdomainrelay.temp.market.receipts.free",
-  "com.publicdomainrelay.temp.market.receipts.x402",
-  "com.publicdomainrelay.temp.market.event",
-  "com.publicdomainrelay.temp.compute.config.wif.simple",
-  "com.fedproxy.rbac",
-  "com.publicdomainrelay.temp.market.bidderAssociation",
-];
-const OAUTH_SCOPE = `atproto ${
-  BIDDER_SCOPE_COLLECTIONS.map((c) => `repo:${c}?action=create repo:${c}?action=update`).join(" ")
-} repo:${BADGE_BLUE_KEYS_NSID}?action=create`
-  + " rpc:com.publicdomainrelay.temp.market.submitBid?aud=*"
-  + " rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*";
+// OAuth scope for the desktop bidder — single source @publicdomainrelay/oauth-scope.
+const OAUTH_SCOPE = DESKTOP_OAUTH_SCOPE.join(" ");
 
 const INGRESS_PROXY_HOST = (options.ingressProxyHost as string);
 const PLC_DIRECTORY_URL = (options.plcDirectoryUrl as string) || "https://plc.directory";

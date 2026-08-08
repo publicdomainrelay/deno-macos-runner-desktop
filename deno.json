@@ -34,6 +34,7 @@
     "@publicdomainrelay/device-key-common": "./lib/common/device-key/mod.ts",
     "@publicdomainrelay/atproto-oauth-common": "./lib/common/atproto-oauth/mod.ts",
     "@publicdomainrelay/badge-blue-keys-common": "./lib/common/badge-blue-keys/mod.ts",
+    "@publicdomainrelay/oauth-scope": "../typescript-helpers/lib/oauth-scope/mod.ts",
     "@publicdomainrelay/device-key-abc": "./lib/abc/device-key/mod.ts",
     "@publicdomainrelay/atproto-oauth-abc": "./lib/abc/atproto-oauth/mod.ts",
     "@publicdomainrelay/badge-blue-keys-abc": "./lib/abc/badge-blue-keys/mod.ts",
