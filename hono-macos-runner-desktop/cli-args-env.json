@@ -61,6 +61,22 @@
       "type": "boolean",
       "description": "Skip market bidder initialization (escape hatch for npm dep issues)",
       "env": "SKIP_MARKET"
+    },
+    "tls-cert-file": {
+      "type": "string",
+      "description": "PEM certificate to serve the loopback API with; requires tls-key-file",
+      "env": "TLS_CERT_FILE"
+    },
+    "tls-key-file": {
+      "type": "string",
+      "description": "PEM private key to serve the loopback API with; requires tls-cert-file",
+      "env": "TLS_KEY_FILE"
+    },
+    "port-file": {
+      "type": "string",
+      "description": "File the bound TCP port is written to once listening (the API binds a random port)",
+      "env": "PORT_FILE",
+      "default": "./port-bound-to"
     }
   }
 }

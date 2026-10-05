@@ -10,3 +10,4 @@ hono-desktop/hono-desktop-bin
 hono-macos-runner-desktop.app/
 .claude/state/
 *.dyli*
+port-bound-to

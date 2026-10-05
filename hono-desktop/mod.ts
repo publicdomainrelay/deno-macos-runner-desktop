@@ -891,7 +891,13 @@ if (HEADLESS_BIDDER) {
 
 const serve = createServe({
   logger,
-  tcp: { addr: HOSTNAME, port: PORT },
+  tcp: {
+    addr: HOSTNAME,
+    port: PORT,
+    certFile: options.tlsCertFile as string | undefined,
+    keyFile: options.tlsKeyFile as string | undefined,
+  },
+  portFile: options.portFile as string | undefined,
 });
 serve.app.route("/", app as never);
 await serve.beginServe();

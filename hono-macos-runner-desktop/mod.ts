@@ -871,7 +871,13 @@ function setupWindowsAndTray(port: number): void {
 
 const serve = createServe({
   logger,
-  tcp: { addr: "127.0.0.1", port: 0 },
+  tcp: {
+    addr: "127.0.0.1",
+    port: 0,
+    certFile: options.tlsCertFile as string | undefined,
+    keyFile: options.tlsKeyFile as string | undefined,
+  },
+  portFile: options.portFile as string | undefined,
 });
 serve.app.route("/", app as never);
 await serve.beginServe();
