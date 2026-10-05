@@ -296,7 +296,13 @@ async function startBidderHeadless(): Promise<void> {
 
   bidderServe = createServe({
     logger,
-    tcp: { addr: "127.0.0.1", port: PORT },
+    tcp: {
+      addr: "127.0.0.1",
+      port: PORT,
+      certFile: options.tlsCertFile as string | undefined,
+      keyFile: options.tlsKeyFile as string | undefined,
+    },
+    portFile: options.portFile as string | undefined,
     relays: [bidderIngress],
   });
 
