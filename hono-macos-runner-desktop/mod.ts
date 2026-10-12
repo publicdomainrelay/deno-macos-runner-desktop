@@ -218,7 +218,6 @@ async function startBidder(): Promise<void> {
       { loadOrGenerateKeypair },
       { createPlcDirectoryClient },
       { createLocalComputeProvider },
-      { createOidcProvisioningEnricher },
       { createRbacProvisioner },
     ] = await Promise.all([
       import("../../atproto-market/lib/did-key-ingress-proxy/mod.ts"),
@@ -229,7 +228,6 @@ async function startBidder(): Promise<void> {
       import("../../atproto-market/lib/market-atproto/mod.ts"),
       import("../../atproto-market/lib/did-plc/mod.ts"),
       import("../../hono-compute-provider/lib/compute-provider-local/mod.ts"),
-      import("../../hono-compute-provider/lib/oidc-issuer-hono/mod.ts"),
       import("../../hono-compute-provider/lib/rbac-atproto/mod.ts"),
     ]);
 
@@ -312,10 +310,7 @@ async function startBidder(): Promise<void> {
         return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
       },
       containerMode: "container",
-      oidcProvisioner: createOidcProvisioningEnricher(() => {
-        const ref = bidderIngress?.ingressRef ?? "";
-        return ref.startsWith("did:web:") ? "https://" + ref.slice("did:web:".length) : ref;
-      }),
+      oidcProvisioning: true,
       rbacProvisioner: createRbacProvisioner(),
     });
 
